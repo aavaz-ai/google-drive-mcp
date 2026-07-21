@@ -9,10 +9,10 @@ const isWatch = process.argv.includes('--watch');
 
 /** @type {import('esbuild').BuildOptions} */
 const buildOptions = {
-  entryPoints: [join(__dirname, '../src/index.ts')],
+  entryPoints: [join(__dirname, '../src/managedIndex.ts')],
   bundle: true,
   platform: 'node',
-  target: 'node18',
+  target: 'node22',
   outfile: join(__dirname, '../dist/index.js'),
   format: 'esm',
   // Remove banner for ESM format - shebang will be added by npm/npx

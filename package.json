@@ -1,16 +1,20 @@
 {
-    "name": "@piotr-agier/google-drive-mcp",
-    "version": "2.5.1",
-    "mcpName": "io.github.piotr-agier/google-drive-mcp",
-    "description": "Secure access to Google Drive, Docs, Sheets, Slides, and Calendar through MCP.",
+    "name": "@enterpret/google-drive-mcp",
+    "version": "0.2.0",
+    "description": "Enterpret-managed Google Drive MCP for app-created content, based on piotr-agier/google-drive-mcp",
     "license": "MIT",
     "author": "Piotr Agier <piotr.agier@gmail.com>",
-    "homepage": "https://github.com/piotr-agier/google-drive-mcp#readme",
-    "bugs": "https://github.com/piotr-agier/google-drive-mcp/issues",
+    "contributors": [
+        "Enterpret"
+    ],
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/piotr-agier/google-drive-mcp.git"
+        "url": "git+https://github.com/aavaz-ai/google-drive-mcp.git"
     },
+    "bugs": {
+        "url": "https://github.com/aavaz-ai/google-drive-mcp/issues"
+    },
+    "homepage": "https://github.com/aavaz-ai/google-drive-mcp#readme",
     "keywords": [
         "mcp",
         "model-context-protocol",
@@ -28,43 +32,62 @@
         "document-automation"
     ],
     "type": "module",
+    "exports": {},
     "bin": {
         "google-drive-mcp": "./dist/index.js"
     },
     "files": [
         "dist/",
-        "docs/authentication.md",
-        "docs/clients.md",
-        "docs/configuration.md",
-        "docs/deployment.md",
-        "docs/development.md",
-        "docs/setup.md",
-        "docs/tools.md",
-        "docs/troubleshooting.md",
         "README.md",
-        "LICENSE"
+        "README_UPSTREAM.md",
+        "ENTERPRET.md",
+        "CHANGELOG.md",
+        "CHANGELOG_ENTERPRET.md",
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md"
     ],
+    "engines": {
+        "node": ">=22"
+    },
+    "publishConfig": {
+        "access": "public"
+    },
     "scripts": {
-        "typecheck": "tsc --noEmit",
-        "build": "npm run typecheck && node scripts/build.js",
+        "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.managed-tests.json",
+        "build": "shx rm -rf dist && npm run typecheck && node scripts/build.js",
         "start": "node dist/index.js",
-        "auth": "node dist/index.js auth",
         "watch": "node scripts/build.js --watch",
-        "registry:validate": "node scripts/registry-metadata.js validate",
-        "registry:verify": "node scripts/registry-metadata.js verify",
         "prepare": "npm run build",
-        "test": "npm run test:build && MCP_TESTING=1 node --test \".tmp-test/test/**/*.test.js\"",
+        "test": "npm run test:upstream && npm run test:managed",
+        "test:upstream": "npm run test:build && node scripts/run-upstream-tests.mjs",
+        "test:managed": "npm run build && vitest run",
         "test:build": "shx rm -rf .tmp-test && tsc -p tsconfig.test.json && shx cp package.json .tmp-test/ && node scripts/build.js",
         "test:unit": "npm run test:build && MCP_TESTING=1 node --test .tmp-test/test/*.test.js",
         "test:integration": "npm run test:build && MCP_TESTING=1 node --test \".tmp-test/test/integration/**/*.test.js\" \".tmp-test/test/schema/**/*.test.js\"",
-        "lint": "tsc --noEmit && eslint src/",
-        "lint:types": "tsc --noEmit",
-        "lint:eslint": "eslint src/"
+        "lint": "npm run typecheck && eslint src/",
+        "lint:types": "npm run typecheck",
+        "lint:eslint": "eslint src/",
+        "check": "npm run lint && npm test && npm run build",
+        "smoke:pack": "node scripts/pack-smoke.mjs"
     },
     "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "zod": "^3.25.76"
+    },
+    "overrides": {
+        "@hono/node-server": "^2.0.5",
+        "body-parser": "^2.3.0",
+        "uuid": "^11.1.1"
+    },
+    "devDependencies": {
         "@google-cloud/local-auth": "^3.0.1",
-        "@modelcontextprotocol/sdk": "^1.24.0",
         "@types/express": "^5.0.3",
+        "@types/node": "^22.9.3",
+        "@types/uuid": "^10.0.0",
+        "@typescript-eslint/eslint-plugin": "^8.56.0",
+        "@typescript-eslint/parser": "^8.56.0",
+        "esbuild": "^0.25.8",
+        "eslint": "^9.39.3",
         "express": "^5.1.0",
         "google-auth-library": "^9.15.0",
         "googleapis": "^144.0.0",
@@ -72,17 +95,9 @@
         "open": "^10.2.0",
         "pdf-lib": "^1.17.1",
         "punycode": "^2.3.1",
-        "uuid": "^11.0.3",
-        "zod": "^3.25.76"
-    },
-    "devDependencies": {
-        "@types/node": "^22.9.3",
-        "@types/uuid": "^10.0.0",
-        "@typescript-eslint/eslint-plugin": "^8.56.0",
-        "@typescript-eslint/parser": "^8.56.0",
-        "esbuild": "^0.25.8",
-        "eslint": "^9.39.3",
         "shx": "^0.4.0",
-        "typescript": "^5.6.2"
+        "typescript": "^5.6.2",
+        "uuid": "^11.1.1",
+        "vitest": "4.1.10"
     }
 }
