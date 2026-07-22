@@ -79,7 +79,19 @@ Live Google calls, OAuth-provider changes, repository remotes, publication, and 
 
 The Enterpret fork is published from [`aavaz-ai/google-drive-mcp`](https://github.com/aavaz-ai/google-drive-mcp). Keep `piotr-agier/google-drive-mcp` configured as the upstream fetch source, and never publish from or push release commits to that upstream repository.
 
-The GitHub release workflow expects an npm trusted publisher for `@enterpret/google-drive-mcp` and publishes with provenance. Because npm trusted publishing cannot be configured until the package exists, version `0.2.0` needs one authorized bootstrap publication from the reviewed packed artifact. After that publication, configure the trusted publisher for this repository and `.github/workflows/publish.yml`; subsequent GitHub releases must use a `v<package-version>` tag that exactly matches `package.json`.
+The GitHub release workflow expects an npm trusted publisher for `@enterpret/google-drive-mcp` and publishes with provenance. Because npm trusted publishing cannot be configured until the package exists, version `0.2.0` needs one authorized bootstrap publication by an `@enterpret` npm owner using interactive authentication and 2FA. Build, inspect, smoke, and publish one exact tarball rather than repacking the source directory:
+
+```bash
+npm ci
+npm run check
+npm audit --audit-level=moderate
+npm audit --omit=dev
+npm pack --pack-destination /absolute/reviewed-artifact-directory
+node scripts/packed-npx-smoke.mjs /absolute/reviewed-artifact-directory/enterpret-google-drive-mcp-0.2.0.tgz
+npm publish /absolute/reviewed-artifact-directory/enterpret-google-drive-mcp-0.2.0.tgz --access public
+```
+
+After the bootstrap publication, verify the registry checksum and exact-version `npx` surface. Then create a protected GitHub environment named `npm` with required reviewers and configure npm Trusted Publishing with GitHub organization `aavaz-ai`, repository `google-drive-mcp`, workflow filename `publish.yml`, and environment `npm`. Subsequent GitHub releases must use a `v<package-version>` tag that exactly matches `package.json`; the workflow serializes releases and publishes the same tarball it smokes.
 
 Before any release, run the complete validation commands above, inspect the packed file list, confirm the target commit and tag, and verify that no credentials or local artifacts are present. Publish the package before enabling or deploying a Wisdom manifest that pins it.
 

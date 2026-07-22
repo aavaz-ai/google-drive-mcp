@@ -8,9 +8,15 @@ permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm
 
     steps:
       - uses: actions/checkout@v5
@@ -23,7 +29,7 @@ jobs:
 
       # Ensure npm supports OIDC trusted publishing and provenance attestations.
       - name: Upgrade npm
-        run: npm i -g npm@latest && npm --version
+        run: npm i -g npm@11.17.0 && npm --version
 
       # Kill any token-based auth that might exist (repo .npmrc, runner ~/.npmrc, etc.)
       - name: Ensure no npm token auth is configured
@@ -43,9 +49,6 @@ jobs:
       - name: Audit dependencies
         run: npm audit --audit-level=moderate
 
-      - name: Smoke packed artifact
-        run: npm run smoke:pack
-
       - name: Verify version matches tag
         run: |
           PACKAGE_VERSION="v$(node -p "require('./package.json').version")"
@@ -54,5 +57,18 @@ jobs:
             exit 1
           fi
 
-      - name: Publish (OIDC Trusted Publishing)
-        run: npm publish --provenance --access public
+      # Pack once so validation and publication operate on identical bytes.
+      - name: Pack release artifact
+        id: package
+        run: |
+          mkdir release-artifact
+          tarball_name="$(npm pack --pack-destination release-artifact | tail -n 1)"
+          test -n "$tarball_name"
+          test -f "release-artifact/$tarball_name"
+          echo "tarball=release-artifact/$tarball_name" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke exact release artifact
+        run: node scripts/packed-npx-smoke.mjs "${{ steps.package.outputs.tarball }}"
+
+      - name: Publish exact artifact with provenance
+        run: npm publish "${{ steps.package.outputs.tarball }}" --provenance --access public
