@@ -71,4 +71,6 @@ jobs:
         run: node scripts/packed-npx-smoke.mjs "${{ steps.package.outputs.tarball }}"
 
       - name: Publish exact artifact with provenance
-        run: npm publish "${{ steps.package.outputs.tarball }}" --provenance --access public
+        # The explicit ./ keeps npm 11 from interpreting the relative tarball
+        # path as a GitHub package spec (release-artifact/<name>.tgz).
+        run: npm publish "./${{ steps.package.outputs.tarball }}" --provenance --access public
