@@ -21,6 +21,7 @@ import {
   emptySchema,
   itemListResultSchema,
   itemMetadataInputSchema,
+  listAuthorizedItemsSchema,
   listItemPermissionsSchema,
   listWorkspaceItemsSchema,
   metadataItemResultSchema,
@@ -41,6 +42,7 @@ import {
   restoreItemSchema,
   restoredItemResultSchema,
   searchWorkspaceItemsSchema,
+  searchAuthorizedItemsSchema,
   shareItemSchema,
   sheetReadResultSchema,
   textReadResultSchema,
@@ -63,6 +65,8 @@ const TOOL_SCHEMAS = {
   create_google_sheet: { input: createGoogleSheetSchema, output: createdItemResultSchema },
   create_google_presentation: { input: createGooglePresentationSchema, output: createdItemResultSchema },
   share_item: { input: shareItemSchema, output: permissionResultSchema },
+  list_authorized_items: { input: listAuthorizedItemsSchema, output: itemListResultSchema },
+  search_authorized_items: { input: searchAuthorizedItemsSchema, output: itemListResultSchema },
   list_workspace_items: { input: listWorkspaceItemsSchema, output: itemListResultSchema },
   search_workspace_items: { input: searchWorkspaceItemsSchema, output: itemListResultSchema },
   get_item_metadata: { input: itemMetadataInputSchema, output: metadataItemResultSchema },
@@ -97,7 +101,7 @@ export const toolDefinitions: Tool[] = GOOGLE_DRIVE_TOOL_NAMES.map((name) => ({
 
 function parse<T extends ToolSchema>(schema: T, args: Record<string, unknown>): z.output<T> {
   const parsed = schema.safeParse(args);
-  if (!parsed.success) throw new GoogleDriveMcpError('invalid_input');
+  if (!parsed.success) throw new GoogleDriveMcpError('INVALID_INPUT');
   return parsed.data;
 }
 
@@ -139,6 +143,12 @@ export async function handleTool(
         break;
       case 'share_item':
         result = await client.shareItem(parse(shareItemSchema, args));
+        break;
+      case 'list_authorized_items':
+        result = await client.listAuthorizedItems(parse(listAuthorizedItemsSchema, args));
+        break;
+      case 'search_authorized_items':
+        result = await client.searchAuthorizedItems(parse(searchAuthorizedItemsSchema, args));
         break;
       case 'list_workspace_items':
         result = await client.listWorkspaceItems(parse(listWorkspaceItemsSchema, args));

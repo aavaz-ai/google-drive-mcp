@@ -1,19 +1,22 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 export type GoogleDriveErrorCode =
-  | "invalid_input"
-  | "authentication_failed"
-  | "permission_denied"
-  | "not_found"
-  | "outside_workspace"
-  | "workspace_not_initialized"
-  | "conflict"
-  | "rate_limited"
-  | "provider_rejected"
-  | "provider_unavailable"
-  | "provider_invalid_response"
-  | "write_unknown_outcome"
-  | "internal_error";
+  | "DRIVE_ITEM_NOT_AUTHORIZED"
+  | "DRIVE_CAPABILITY_DENIED"
+  | "DRIVE_ITEM_TYPE_UNSUPPORTED"
+  | "DRIVE_PARENT_NOT_AUTHORIZED"
+  | "DRIVE_ITEM_NOT_FOUND"
+  | "INVALID_INPUT"
+  | "AUTHENTICATION_FAILED"
+  | "PERMISSION_DENIED"
+  | "WORKSPACE_NOT_INITIALIZED"
+  | "CONFLICT"
+  | "RATE_LIMITED"
+  | "PROVIDER_REJECTED"
+  | "PROVIDER_UNAVAILABLE"
+  | "PROVIDER_INVALID_RESPONSE"
+  | "WRITE_UNKNOWN_OUTCOME"
+  | "INTERNAL_ERROR";
 
 export type ErrorOutcome = "not_completed" | "unknown";
 
@@ -32,30 +35,33 @@ export class GoogleDriveMcpError extends Error {
 }
 
 const SAFE_MESSAGES: Record<GoogleDriveErrorCode, string> = {
-  invalid_input: "The request is invalid for this Google Drive tool.",
-  authentication_failed: "The Google Drive connection could not be authenticated.",
-  permission_denied: "The Google Drive connection is not permitted to perform this operation.",
-  not_found: "The requested Google Drive item was not found.",
-  outside_workspace: "The requested item is outside the managed Enterpret workspace.",
-  workspace_not_initialized: "The managed Enterpret workspace does not exist yet. Create content or call ensure_workspace first.",
-  conflict: "The Google Drive operation conflicts with current provider state.",
-  rate_limited: "Google Drive rate-limited the operation.",
-  provider_rejected: "Google rejected the operation.",
-  provider_unavailable: "Google did not complete the operation.",
-  provider_invalid_response: "Google returned an invalid response.",
-  write_unknown_outcome: "The Google Drive write outcome is unknown. Do not retry automatically.",
-  internal_error: "The Google Drive tool failed safely before a result could be returned.",
+  DRIVE_ITEM_NOT_AUTHORIZED: "The requested Google Drive item is not authorized for this connection.",
+  DRIVE_CAPABILITY_DENIED: "Google Drive does not grant the capability required for this operation.",
+  DRIVE_ITEM_TYPE_UNSUPPORTED: "This Google Drive item type is not supported for the requested operation.",
+  DRIVE_PARENT_NOT_AUTHORIZED: "The requested parent folder is not authorized for this connection.",
+  DRIVE_ITEM_NOT_FOUND: "The authorized Google Drive item or subresource no longer exists.",
+  INVALID_INPUT: "The request is invalid for this Google Drive tool.",
+  AUTHENTICATION_FAILED: "The Google Drive connection could not be authenticated.",
+  PERMISSION_DENIED: "The Google Drive connection is not permitted to perform this operation.",
+  WORKSPACE_NOT_INITIALIZED: "The managed Enterpret workspace does not exist yet. Create content or call ensure_workspace first.",
+  CONFLICT: "The Google Drive operation conflicts with current provider state.",
+  RATE_LIMITED: "Google Drive rate-limited the operation.",
+  PROVIDER_REJECTED: "Google rejected the operation.",
+  PROVIDER_UNAVAILABLE: "Google did not complete the operation.",
+  PROVIDER_INVALID_RESPONSE: "Google returned an invalid response.",
+  WRITE_UNKNOWN_OUTCOME: "The Google Drive write outcome is unknown. Do not retry automatically.",
+  INTERNAL_ERROR: "The Google Drive tool failed safely before a result could be returned.",
 };
 
 export function toToolError(error: unknown): CallToolResult {
-  const safeError = error instanceof GoogleDriveMcpError ? error : new GoogleDriveMcpError("internal_error");
+  const safeError = error instanceof GoogleDriveMcpError ? error : new GoogleDriveMcpError("INTERNAL_ERROR");
   const payload = {
     status: "error",
     error: {
       code: safeError.code,
       message: SAFE_MESSAGES[safeError.code],
       outcome: safeError.outcome,
-      retryable: safeError.code === "rate_limited" || safeError.code === "provider_unavailable",
+      retryable: safeError.code === "RATE_LIMITED" || safeError.code === "PROVIDER_UNAVAILABLE",
       ...(safeError.providerStatus === undefined ? {} : { provider_status: safeError.providerStatus }),
     },
   };

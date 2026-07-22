@@ -13,6 +13,8 @@ import {
   type CreateGooglePresentationInput,
   type CreateGoogleSheetInput,
   type CreateTextFileInput,
+  type AuthorizedItemType,
+  type ListAuthorizedItemsInput,
   type ListWorkspaceItemsInput,
   type ListItemPermissionsInput,
   type ReadGoogleDocInput,
@@ -23,6 +25,7 @@ import {
   type RenameItemInput,
   type ReplaceTextFileInput,
   type SearchWorkspaceItemsInput,
+  type SearchAuthorizedItemsInput,
   type ShareItemInput,
   type SlideInput,
   type UpdateGoogleDocInput,
@@ -46,7 +49,22 @@ export const WORKSPACE_NAME = "Enterpret";
 export const WORKSPACE_DESCRIPTION =
   "Managed by the Enterpret Google Drive connector. Content inside may be changed by the connected agent.";
 
-const FILE_FIELDS = "id,name,mimeType,parents,webViewLink,createdTime,modifiedTime,trashed,description";
+const FILE_FIELDS = [
+  "id",
+  "name",
+  "mimeType",
+  "parents",
+  "webViewLink",
+  "createdTime",
+  "modifiedTime",
+  "trashed",
+  "description",
+  "driveId",
+  "copyRequiresWriterPermission",
+  "contentRestrictions(readOnly)",
+  "downloadRestrictions(effectiveDownloadRestrictionWithContext(restrictedForReaders,restrictedForWriters))",
+  "capabilities(canEdit,canCopy,canAddChildren,canDownload,canRename,canTrash,canUntrash,canModifyContent,canMoveItemWithinDrive,canMoveItemOutOfDrive,canShare)",
+].join(",");
 const READ_RETRY_DELAYS_MS = [0, 100, 300] as const;
 const MAX_ANCESTRY_NODES = 256;
 const MAX_JSON_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -58,6 +76,20 @@ export type FetchLike = (input: string | URL | Request, init?: RequestInit) => P
 export type Sleep = (milliseconds: number) => Promise<void>;
 type JsonRecord = Record<string, unknown>;
 
+interface DriveCapabilities {
+  canEdit?: boolean;
+  canCopy?: boolean;
+  canAddChildren?: boolean;
+  canDownload?: boolean;
+  canRename?: boolean;
+  canTrash?: boolean;
+  canUntrash?: boolean;
+  canModifyContent?: boolean;
+  canMoveItemWithinDrive?: boolean;
+  canMoveItemOutOfDrive?: boolean;
+  canShare?: boolean;
+}
+
 interface DriveFile {
   id: string;
   name: string;
@@ -68,11 +100,29 @@ interface DriveFile {
   modifiedTime?: string;
   trashed?: boolean;
   description?: string;
+  driveId?: string;
+  copyRequiresWriterPermission?: boolean;
+  contentRestrictions?: Array<{ readOnly: boolean }>;
+  downloadRestrictions?: {
+    effectiveDownloadRestrictionWithContext?: {
+      restrictedForReaders?: boolean;
+      restrictedForWriters?: boolean;
+    };
+  };
+  capabilities?: DriveCapabilities;
 }
 
 interface DriveFileList {
   files?: DriveFile[];
   nextPageToken?: string;
+}
+
+type AuthorizationClass = "workspace" | "external_authorized";
+
+interface AuthorizedItem {
+  item: DriveFile;
+  authorizationClass: AuthorizationClass;
+  workspace: DriveFile | null;
 }
 
 export interface ItemReference {
@@ -101,13 +151,32 @@ interface GoogleDriveClientOptions {
 
 function asRecord(value: unknown): JsonRecord {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new GoogleDriveMcpError("provider_invalid_response");
+    throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
   }
   return value as JsonRecord;
 }
 
 function asDriveFile(value: unknown): DriveFile {
   const record = asRecord(value);
+  const capabilities = record.capabilities === undefined ? undefined : asRecord(record.capabilities);
+  const capabilityNames = [
+    "canEdit",
+    "canCopy",
+    "canAddChildren",
+    "canDownload",
+    "canRename",
+    "canTrash",
+    "canUntrash",
+    "canModifyContent",
+    "canMoveItemWithinDrive",
+    "canMoveItemOutOfDrive",
+    "canShare",
+  ] as const;
+  const contentRestrictions = record.contentRestrictions;
+  const downloadRestrictions = record.downloadRestrictions === undefined ? undefined : asRecord(record.downloadRestrictions);
+  const effectiveDownloadRestriction = downloadRestrictions?.effectiveDownloadRestrictionWithContext === undefined
+    ? undefined
+    : asRecord(downloadRestrictions.effectiveDownloadRestrictionWithContext);
   if (
     typeof record.id !== "string" ||
     typeof record.name !== "string" ||
@@ -118,9 +187,23 @@ function asDriveFile(value: unknown): DriveFile {
     (record.createdTime !== undefined && typeof record.createdTime !== "string") ||
     (record.modifiedTime !== undefined && typeof record.modifiedTime !== "string") ||
     (record.trashed !== undefined && typeof record.trashed !== "boolean") ||
-    (record.description !== undefined && typeof record.description !== "string")
+    (record.description !== undefined && typeof record.description !== "string") ||
+    (record.driveId !== undefined && typeof record.driveId !== "string") ||
+    (record.copyRequiresWriterPermission !== undefined && typeof record.copyRequiresWriterPermission !== "boolean") ||
+    (capabilities !== undefined && capabilityNames.some((name) => capabilities[name] !== undefined && typeof capabilities[name] !== "boolean")) ||
+    (contentRestrictions !== undefined &&
+      (!Array.isArray(contentRestrictions) ||
+        contentRestrictions.some((restriction) => {
+          const parsed = asRecord(restriction);
+          return typeof parsed.readOnly !== "boolean";
+        }))) ||
+    (effectiveDownloadRestriction !== undefined &&
+      ((effectiveDownloadRestriction.restrictedForReaders !== undefined &&
+        typeof effectiveDownloadRestriction.restrictedForReaders !== "boolean") ||
+        (effectiveDownloadRestriction.restrictedForWriters !== undefined &&
+          typeof effectiveDownloadRestriction.restrictedForWriters !== "boolean")))
   ) {
-    throw new GoogleDriveMcpError("provider_invalid_response");
+    throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
   }
   return record as unknown as DriveFile;
 }
@@ -146,6 +229,29 @@ function escapeDriveQuery(value: string): string {
   return value.replace(/\\/gu, "\\\\").replace(/'/gu, "\\'");
 }
 
+function authorizedTypeClause(type: AuthorizedItemType | undefined): string | null {
+  switch (type) {
+    case undefined:
+      return null;
+    case "file":
+      return `mimeType != '${FOLDER_MIME}'`;
+    case "folder":
+      return `mimeType = '${FOLDER_MIME}'`;
+    case "doc":
+      return `mimeType = '${DOC_MIME}'`;
+    case "sheet":
+      return `mimeType = '${SHEET_MIME}'`;
+    case "slides":
+      return `mimeType = '${PRESENTATION_MIME}'`;
+    case "blob":
+      return "not mimeType contains 'application/vnd.google-apps.'";
+  }
+}
+
+function driveQuery(clauses: Array<string | null>): string {
+  return clauses.filter((clause): clause is string => clause !== null).join(" and ");
+}
+
 function compareWorkspaceCandidates(left: DriveFile, right: DriveFile): number {
   const leftCreated = left.createdTime ?? "";
   const rightCreated = right.createdTime ?? "";
@@ -154,18 +260,18 @@ function compareWorkspaceCandidates(left: DriveFile, right: DriveFile): number {
 }
 
 function statusError(status: number): GoogleDriveMcpError {
-  if (status === 401) return new GoogleDriveMcpError("authentication_failed", { providerStatus: status });
-  if (status === 403) return new GoogleDriveMcpError("permission_denied", { providerStatus: status });
-  if (status === 404) return new GoogleDriveMcpError("not_found", { providerStatus: status });
-  if (status === 409 || status === 412) return new GoogleDriveMcpError("conflict", { providerStatus: status });
-  if (status === 429) return new GoogleDriveMcpError("rate_limited", { providerStatus: status });
-  if (status >= 500) return new GoogleDriveMcpError("provider_unavailable", { providerStatus: status });
-  return new GoogleDriveMcpError("provider_rejected", { providerStatus: status });
+  if (status === 401) return new GoogleDriveMcpError("AUTHENTICATION_FAILED", { providerStatus: status });
+  if (status === 403) return new GoogleDriveMcpError("PERMISSION_DENIED", { providerStatus: status });
+  if (status === 404) return new GoogleDriveMcpError("DRIVE_ITEM_NOT_FOUND", { providerStatus: status });
+  if (status === 409 || status === 412) return new GoogleDriveMcpError("CONFLICT", { providerStatus: status });
+  if (status === 429) return new GoogleDriveMcpError("RATE_LIMITED", { providerStatus: status });
+  if (status >= 500) return new GoogleDriveMcpError("PROVIDER_UNAVAILABLE", { providerStatus: status });
+  return new GoogleDriveMcpError("PROVIDER_REJECTED", { providerStatus: status });
 }
 
 function unknownWriteOutcome(error: unknown): GoogleDriveMcpError {
-  if (error instanceof GoogleDriveMcpError && error.code === "write_unknown_outcome") return error;
-  return new GoogleDriveMcpError("write_unknown_outcome", {
+  if (error instanceof GoogleDriveMcpError && error.code === "WRITE_UNKNOWN_OUTCOME") return error;
+  return new GoogleDriveMcpError("WRITE_UNKNOWN_OUTCOME", {
     outcome: "unknown",
     ...(error instanceof GoogleDriveMcpError && error.providerStatus !== undefined
       ? { providerStatus: error.providerStatus }
@@ -176,8 +282,8 @@ function unknownWriteOutcome(error: unknown): GoogleDriveMcpError {
 async function readBoundedBody(response: Response, maximumBytes: number, operation: "read" | "write"): Promise<Uint8Array> {
   const invalidResponse = (): GoogleDriveMcpError =>
     operation === "write"
-      ? unknownWriteOutcome(new GoogleDriveMcpError("provider_invalid_response"))
-      : new GoogleDriveMcpError("provider_invalid_response");
+      ? unknownWriteOutcome(new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE"))
+      : new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
   const declaredLength = response.headers.get("content-length");
   if (declaredLength !== null) {
     const parsedLength = Number(declaredLength);
@@ -206,7 +312,7 @@ async function readBoundedBody(response: Response, maximumBytes: number, operati
   } catch (error) {
     if (error instanceof GoogleDriveMcpError) throw error;
     if (operation === "write") throw unknownWriteOutcome(error);
-    throw new GoogleDriveMcpError("provider_unavailable");
+    throw new GoogleDriveMcpError("PROVIDER_UNAVAILABLE");
   }
   const body = new Uint8Array(totalBytes);
   let offset = 0;
@@ -222,7 +328,7 @@ function decodeUtf8(body: Uint8Array, operation: "read" | "write"): string {
     return new TextDecoder("utf-8", { fatal: true }).decode(body);
   } catch (error) {
     if (operation === "write") throw unknownWriteOutcome(error);
-    throw new GoogleDriveMcpError("provider_invalid_response");
+    throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
   }
 }
 
@@ -245,49 +351,49 @@ function assertDriveFilePostcondition(
     trashed?: boolean;
   },
 ): DriveFile {
-  if (expected.id !== undefined && file.id !== expected.id) throw new GoogleDriveMcpError("provider_invalid_response");
+  if (expected.id !== undefined && file.id !== expected.id) throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
   if (expected.differentFromId !== undefined && file.id === expected.differentFromId) {
-    throw new GoogleDriveMcpError("provider_invalid_response");
+    throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
   }
-  if (expected.name !== undefined && file.name !== expected.name) throw new GoogleDriveMcpError("provider_invalid_response");
+  if (expected.name !== undefined && file.name !== expected.name) throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
   if (expected.mimeType !== undefined && file.mimeType !== expected.mimeType) {
-    throw new GoogleDriveMcpError("provider_invalid_response");
+    throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
   }
   if (expected.parentId !== undefined && !(file.parents ?? []).includes(expected.parentId)) {
-    throw new GoogleDriveMcpError("provider_invalid_response");
+    throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
   }
   if (expected.trashed !== undefined && file.trashed !== expected.trashed) {
-    throw new GoogleDriveMcpError("provider_invalid_response");
+    throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
   }
   return file;
 }
 
 function singleDocumentBody(document: JsonRecord): JsonRecord {
   if (document.tabs === undefined) return asRecord(document.body);
-  if (!Array.isArray(document.tabs)) throw new GoogleDriveMcpError("provider_invalid_response");
+  if (!Array.isArray(document.tabs)) throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
   const tabs: JsonRecord[] = [];
   const collectTabs = (values: unknown[]): void => {
     for (const value of values) {
       const tab = asRecord(value);
       tabs.push(tab);
       if (tab.childTabs !== undefined) {
-        if (!Array.isArray(tab.childTabs)) throw new GoogleDriveMcpError("provider_invalid_response");
+        if (!Array.isArray(tab.childTabs)) throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
         collectTabs(tab.childTabs);
       }
     }
   };
   collectTabs(document.tabs);
-  if (tabs.length === 0) throw new GoogleDriveMcpError("provider_invalid_response");
+  if (tabs.length === 0) throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
   if (tabs.length > 1) {
     // V0 deliberately rejects multi-tab Docs instead of silently reading or
     // replacing only one tab and claiming complete-document behavior.
-    throw new GoogleDriveMcpError("invalid_input");
+    throw new GoogleDriveMcpError("INVALID_INPUT");
   }
   return asRecord(asRecord(tabs[0]?.documentTab).body);
 }
 
 function documentContent(body: JsonRecord): unknown[] {
-  if (!Array.isArray(body.content)) throw new GoogleDriveMcpError("provider_invalid_response");
+  if (!Array.isArray(body.content)) throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
   return body.content;
 }
 
@@ -312,7 +418,7 @@ function extractDocumentText(value: unknown, maximumCharacters = MAX_TEXT_LENGTH
       const content = (textRun as JsonRecord).content;
       if (typeof content === "string") {
         characterCount += content.length;
-        if (characterCount > maximumCharacters) throw new GoogleDriveMcpError("provider_invalid_response");
+        if (characterCount > maximumCharacters) throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
         fragments.push(content);
       }
     }
@@ -362,24 +468,24 @@ export class GoogleDriveClient {
         });
       } catch {
         if (operation === "write") {
-          throw new GoogleDriveMcpError("write_unknown_outcome", { outcome: "unknown" });
+          throw new GoogleDriveMcpError("WRITE_UNKNOWN_OUTCOME", { outcome: "unknown" });
         }
         if (attempt + 1 < attempts) continue;
-        throw new GoogleDriveMcpError("provider_unavailable");
+        throw new GoogleDriveMcpError("PROVIDER_UNAVAILABLE");
       }
       if (response.ok) return response;
       if (operation === "read" && (response.status === 429 || response.status >= 500) && attempt + 1 < attempts) {
         continue;
       }
       if (operation === "write" && response.status >= 500) {
-        throw new GoogleDriveMcpError("write_unknown_outcome", {
+        throw new GoogleDriveMcpError("WRITE_UNKNOWN_OUTCOME", {
           outcome: "unknown",
           providerStatus: response.status,
         });
       }
       throw statusError(response.status);
     }
-    throw new GoogleDriveMcpError("provider_unavailable");
+    throw new GoogleDriveMcpError("PROVIDER_UNAVAILABLE");
   }
 
   private async readJson(url: string): Promise<unknown> {
@@ -388,7 +494,7 @@ export class GoogleDriveClient {
       return JSON.parse(decodeUtf8(body, "read")) as unknown;
     } catch (error) {
       if (error instanceof GoogleDriveMcpError) throw error;
-      throw new GoogleDriveMcpError("provider_invalid_response");
+      throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
     }
   }
 
@@ -404,12 +510,12 @@ export class GoogleDriveClient {
         return { response, body: await readBoundedBody(response, maximumBytes, "read") };
       } catch (error) {
         const transientBodyFailure =
-          error instanceof GoogleDriveMcpError && error.code === "provider_unavailable";
+          error instanceof GoogleDriveMcpError && error.code === "PROVIDER_UNAVAILABLE";
         if (transientBodyFailure && attempt + 1 < READ_RETRY_DELAYS_MS.length) continue;
         throw error;
       }
     }
-    throw new GoogleDriveMcpError("provider_unavailable");
+    throw new GoogleDriveMcpError("PROVIDER_UNAVAILABLE");
   }
 
   private async writeJson(url: string, method: "POST" | "PATCH" | "PUT", body?: unknown): Promise<unknown> {
@@ -425,7 +531,7 @@ export class GoogleDriveClient {
     );
     // Once a write has returned 2xx, a missing or malformed acknowledgement
     // cannot prove whether the provider committed it. Preserve that ambiguity.
-    if (response.status === 204) throw unknownWriteOutcome(new GoogleDriveMcpError("provider_invalid_response"));
+    if (response.status === 204) throw unknownWriteOutcome(new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE"));
     try {
       const responseBody = await readBoundedBody(response, MAX_JSON_RESPONSE_BYTES, "write");
       return JSON.parse(decodeUtf8(responseBody, "write")) as unknown;
@@ -436,13 +542,13 @@ export class GoogleDriveClient {
 
   private async deleteWrite(url: string): Promise<void> {
     const response = await this.request(url, { method: "DELETE" }, "write");
-    if (response.status !== 204) throw unknownWriteOutcome(new GoogleDriveMcpError("provider_invalid_response"));
+    if (response.status !== 204) throw unknownWriteOutcome(new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE"));
     const body = await readBoundedBody(response, 0, "write");
-    if (body.byteLength !== 0) throw unknownWriteOutcome(new GoogleDriveMcpError("provider_invalid_response"));
+    if (body.byteLength !== 0) throw unknownWriteOutcome(new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE"));
   }
 
   private async getFile(itemId: string): Promise<DriveFile> {
-    const query = new URLSearchParams({ fields: FILE_FIELDS, supportsAllDrives: "false" });
+    const query = new URLSearchParams({ fields: FILE_FIELDS, supportsAllDrives: "true" });
     return asDriveFile(await this.readJson(`${DRIVE_API}/files/${encodePathPart(itemId)}?${query}`));
   }
 
@@ -457,12 +563,15 @@ export class GoogleDriveClient {
       fields: `nextPageToken,files(${FILE_FIELDS})`,
       pageSize: String(pageSize),
       spaces: "drive",
+      corpora: "user",
+      includeItemsFromAllDrives: "true",
+      supportsAllDrives: "true",
     });
     if (orderBy !== null) query.set("orderBy", orderBy);
     if (cursor !== undefined) query.set("pageToken", cursor);
     const result = asRecord(await this.readJson(`${DRIVE_API}/files?${query}`));
     if (!Array.isArray(result.files) || result.files.length > pageSize) {
-      throw new GoogleDriveMcpError("provider_invalid_response");
+      throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
     }
     const files = result.files.map(asDriveFile);
     if (
@@ -471,7 +580,7 @@ export class GoogleDriveClient {
         result.nextPageToken.length === 0 ||
         result.nextPageToken.length > MAX_PAGE_TOKEN_LENGTH)
     ) {
-      throw new GoogleDriveMcpError("provider_invalid_response");
+      throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
     }
     return {
       files,
@@ -490,27 +599,27 @@ export class GoogleDriveClient {
       const page = await this.listFiles(query, 100, cursor);
       for (const file of page.files ?? []) {
         if (file.description !== WORKSPACE_DESCRIPTION) continue;
-        if (typeof file.createdTime !== "string") throw new GoogleDriveMcpError("provider_invalid_response");
+        if (typeof file.createdTime !== "string") throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
         candidates.push(file);
       }
       cursor = page.nextPageToken;
       if (cursor === undefined) return candidates.sort(compareWorkspaceCandidates)[0] ?? null;
-      if (seenCursors.has(cursor)) throw new GoogleDriveMcpError("provider_invalid_response");
+      if (seenCursors.has(cursor)) throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
       seenCursors.add(cursor);
     }
     // An incomplete workspace search must not fall through to creation: doing
     // so could create a duplicate marker outside the pages we inspected.
-    throw new GoogleDriveMcpError("provider_invalid_response");
+    throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
   }
 
   private async activeWorkspace(): Promise<DriveFile> {
     const workspace = await this.findWorkspace(false);
-    if (workspace === null) throw new GoogleDriveMcpError("workspace_not_initialized");
+    if (workspace === null) throw new GoogleDriveMcpError("WORKSPACE_NOT_INITIALIZED");
     return workspace;
   }
 
   private async createDriveFile(metadata: JsonRecord): Promise<DriveFile> {
-    const query = new URLSearchParams({ fields: FILE_FIELDS });
+    const query = new URLSearchParams({ fields: FILE_FIELDS, supportsAllDrives: "true" });
     const result = await this.writeJson(`${DRIVE_API}/files?${query}`, "POST", metadata);
     return parseWriteResult(() =>
       assertDriveFilePostcondition(asDriveFile(result), {
@@ -524,49 +633,108 @@ export class GoogleDriveClient {
     );
   }
 
-  private async assertInsideWorkspace(itemId: string, options: { allowRoot?: boolean } = {}): Promise<{ item: DriveFile; workspace: DriveFile }> {
-    const workspace = await this.activeWorkspace();
-    const item = await this.getFile(itemId);
-    if (item.id === workspace.id) {
-      if (options.allowRoot === false) throw new GoogleDriveMcpError("outside_workspace");
-      return { item, workspace };
+  private async authorizeItem(itemId: string, role: "item" | "parent" = "item"): Promise<AuthorizedItem> {
+    let item: DriveFile;
+    try {
+      // A fresh files.get is the authorization oracle for every caller-supplied
+      // ID. No classification or resource catalog survives this invocation.
+      item = await this.getFile(itemId);
+    } catch (error) {
+      if (error instanceof GoogleDriveMcpError && error.code === "DRIVE_ITEM_NOT_FOUND") {
+        throw new GoogleDriveMcpError(
+          role === "parent" ? "DRIVE_PARENT_NOT_AUTHORIZED" : "DRIVE_ITEM_NOT_AUTHORIZED",
+          { providerStatus: error.providerStatus },
+        );
+      }
+      throw error;
     }
+
+    const workspace = await this.findWorkspace(false);
+    if (workspace === null) return { item, authorizationClass: "external_authorized", workspace: null };
+    if (item.id === workspace.id) return { item, authorizationClass: "workspace", workspace };
 
     const visited = new Set<string>([item.id]);
     const frontier = [...(item.parents ?? [])];
     while (frontier.length > 0) {
       const parentId = frontier.shift();
       if (parentId === undefined || visited.has(parentId)) continue;
-      if (parentId === workspace.id) return { item, workspace };
+      if (parentId === workspace.id) return { item, authorizationClass: "workspace", workspace };
       if (visited.size >= MAX_ANCESTRY_NODES) {
-        // Exhaustion is not evidence that the item is outside or inside. Fail
-        // closed before any caller can use the unresolved ancestry for a write.
-        throw new GoogleDriveMcpError("outside_workspace");
+        return { item, authorizationClass: "external_authorized", workspace };
       }
       visited.add(parentId);
-      let parent: DriveFile;
       try {
-        parent = await this.getFile(parentId);
+        const parent = await this.getFile(parentId);
+        frontier.push(...(parent.parents ?? []));
       } catch (error) {
         if (
           error instanceof GoogleDriveMcpError &&
-          (error.code === "not_found" || error.code === "permission_denied")
+          (error.code === "DRIVE_ITEM_NOT_FOUND" || error.code === "PERMISSION_DENIED")
         ) {
-          throw new GoogleDriveMcpError("outside_workspace");
+          continue;
         }
         throw error;
       }
-      frontier.push(...(parent.parents ?? []));
     }
-    throw new GoogleDriveMcpError("outside_workspace");
+    return { item, authorizationClass: "external_authorized", workspace };
   }
 
-  private async managedParent(parentId: string | undefined, createWorkspace: boolean): Promise<DriveFile> {
-    const workspace = createWorkspace ? (await this.ensureWorkspace()).workspace : itemReference(await this.activeWorkspace());
-    if (parentId === undefined || parentId === workspace.id) return this.getFile(workspace.id);
-    const { item } = await this.assertInsideWorkspace(parentId);
-    if (item.mimeType !== FOLDER_MIME || item.trashed === true) throw new GoogleDriveMcpError("invalid_input");
-    return item;
+  private requireCapability(item: DriveFile, capability: keyof DriveCapabilities): void {
+    if (item.capabilities?.[capability] !== true) {
+      throw new GoogleDriveMcpError("DRIVE_CAPABILITY_DENIED");
+    }
+  }
+
+  private requireEditable(item: DriveFile): void {
+    this.requireCapability(item, "canEdit");
+    this.requireCapability(item, "canModifyContent");
+    if (item.contentRestrictions?.some((restriction) => restriction.readOnly) === true) {
+      throw new GoogleDriveMcpError("DRIVE_CAPABILITY_DENIED");
+    }
+  }
+
+  private assertNotWorkspaceRoot(authorized: AuthorizedItem): void {
+    if (authorized.authorizationClass === "workspace" && authorized.workspace?.id === authorized.item.id) {
+      throw new GoogleDriveMcpError("DRIVE_CAPABILITY_DENIED");
+    }
+  }
+
+  private assertExternalFolderSupported(authorized: AuthorizedItem): void {
+    if (authorized.authorizationClass === "external_authorized" && authorized.item.mimeType === FOLDER_MIME) {
+      throw new GoogleDriveMcpError("DRIVE_ITEM_TYPE_UNSUPPORTED");
+    }
+  }
+
+  private async authorizedParent(parentId: string | undefined, createWorkspace: boolean): Promise<AuthorizedItem> {
+    let authorized: AuthorizedItem;
+    if (parentId === undefined) {
+      const workspace = createWorkspace
+        ? (await this.ensureWorkspace()).workspace
+        : itemReference(await this.activeWorkspace());
+      const item = await this.getFile(workspace.id);
+      authorized = { item, authorizationClass: "workspace", workspace: item };
+    } else {
+      authorized = await this.authorizeItem(parentId, "parent");
+    }
+    if (authorized.item.mimeType !== FOLDER_MIME) {
+      throw new GoogleDriveMcpError("DRIVE_ITEM_TYPE_UNSUPPORTED");
+    }
+    if (authorized.item.trashed === true) throw new GoogleDriveMcpError("DRIVE_PARENT_NOT_AUTHORIZED");
+    this.requireCapability(authorized.item, "canAddChildren");
+    return authorized;
+  }
+
+  private async workspaceParent(parentId: string | undefined): Promise<DriveFile> {
+    if (parentId === undefined) return this.getFile((await this.activeWorkspace()).id);
+    const authorized = await this.authorizeItem(parentId, "parent");
+    if (authorized.authorizationClass !== "workspace") {
+      throw new GoogleDriveMcpError("DRIVE_PARENT_NOT_AUTHORIZED");
+    }
+    if (authorized.item.mimeType !== FOLDER_MIME) {
+      throw new GoogleDriveMcpError("DRIVE_ITEM_TYPE_UNSUPPORTED");
+    }
+    if (authorized.item.trashed === true) throw new GoogleDriveMcpError("DRIVE_PARENT_NOT_AUTHORIZED");
+    return authorized.item;
   }
 
   private async isDescendantOf(itemId: string, possibleAncestorId: string): Promise<boolean> {
@@ -579,7 +747,7 @@ export class GoogleDriveClient {
       if (visited.size >= MAX_ANCESTRY_NODES) {
         // A false result after exhaustion would permit a potentially cyclic
         // folder move. Treat an unresolved graph as invalid instead.
-        throw new GoogleDriveMcpError("invalid_input");
+        throw new GoogleDriveMcpError("INVALID_INPUT");
       }
       visited.add(currentId);
       const current = await this.getFile(currentId);
@@ -590,7 +758,7 @@ export class GoogleDriveClient {
 
   private assertMime(item: DriveFile, expected: string | Set<string>): void {
     const matches = typeof expected === "string" ? item.mimeType === expected : expected.has(item.mimeType);
-    if (!matches) throw new GoogleDriveMcpError("invalid_input");
+    if (!matches) throw new GoogleDriveMcpError("DRIVE_ITEM_TYPE_UNSUPPORTED");
   }
 
   private async uploadText(
@@ -607,7 +775,7 @@ export class GoogleDriveClient {
       Buffer.from(content, "utf8"),
       Buffer.from(`\r\n--${boundary}--\r\n`),
     ]);
-    const query = new URLSearchParams({ uploadType: "multipart", fields: FILE_FIELDS });
+    const query = new URLSearchParams({ uploadType: "multipart", fields: FILE_FIELDS, supportsAllDrives: "true" });
     const path = existingItem === undefined ? "/files" : `/files/${encodePathPart(existingItem.id)}`;
     const response = await this.request(
       `${DRIVE_UPLOAD_API}${path}?${query}`,
@@ -653,7 +821,7 @@ export class GoogleDriveClient {
       requests: [{ insertText: { location: { index: 1 }, text: content } }],
     });
     parseWriteResult(() => {
-      if (asRecord(result).documentId !== documentId) throw new GoogleDriveMcpError("provider_invalid_response");
+      if (asRecord(result).documentId !== documentId) throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
     });
   }
 
@@ -665,7 +833,7 @@ export class GoogleDriveClient {
     for (const node of contentNodes) {
       const candidate = asRecord(node).endIndex;
       if (typeof candidate !== "number" || !Number.isInteger(candidate) || candidate < 1) {
-        throw new GoogleDriveMcpError("provider_invalid_response");
+        throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
       }
       endIndex = Math.max(endIndex, candidate);
     }
@@ -675,7 +843,7 @@ export class GoogleDriveClient {
     if (requests.length > 0) {
       const result = await this.writeJson(`${DOCS_API}/${encodePathPart(documentId)}:batchUpdate`, "POST", { requests });
       parseWriteResult(() => {
-        if (asRecord(result).documentId !== documentId) throw new GoogleDriveMcpError("provider_invalid_response");
+        if (asRecord(result).documentId !== documentId) throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
       });
     }
   }
@@ -699,7 +867,7 @@ export class GoogleDriveClient {
         acknowledgement.updatedColumns !== expectedColumns ||
         acknowledgement.updatedCells !== expectedCells
       ) {
-        throw new GoogleDriveMcpError("provider_invalid_response");
+        throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
       }
     });
   }
@@ -729,11 +897,11 @@ export class GoogleDriveClient {
 
   private async replacePresentation(presentationId: string, slides: SlideInput[]): Promise<void> {
     const presentation = asRecord(await this.readJson(`${SLIDES_API}/${encodePathPart(presentationId)}`));
-    if (!Array.isArray(presentation.slides)) throw new GoogleDriveMcpError("provider_invalid_response");
+    if (!Array.isArray(presentation.slides)) throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
     const existingSlideIds = presentation.slides.map((page) => {
       const objectId = asRecord(page).objectId;
       if (typeof objectId !== "string" || objectId.length === 0) {
-        throw new GoogleDriveMcpError("provider_invalid_response");
+        throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
       }
       return objectId;
     });
@@ -742,7 +910,7 @@ export class GoogleDriveClient {
     });
     parseWriteResult(() => {
       if (asRecord(result).presentationId !== presentationId) {
-        throw new GoogleDriveMcpError("provider_invalid_response");
+        throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
       }
     });
   }
@@ -754,7 +922,7 @@ export class GoogleDriveClient {
     const anyWorkspace = await this.findWorkspace(true);
     if (anyWorkspace !== null) {
       const result = await this.writeJson(
-        `${DRIVE_API}/files/${encodePathPart(anyWorkspace.id)}?fields=${encodeURIComponent(FILE_FIELDS)}`,
+        `${DRIVE_API}/files/${encodePathPart(anyWorkspace.id)}?${new URLSearchParams({ fields: FILE_FIELDS, supportsAllDrives: "true" })}`,
         "PATCH",
         {
           trashed: false,
@@ -775,19 +943,19 @@ export class GoogleDriveClient {
   }
 
   async createFolder(input: CreateFolderInput): Promise<{ status: "created"; item: ItemReference }> {
-    const parent = await this.managedParent(input.parent_id, true);
+    const parent = (await this.authorizedParent(input.parent_id, true)).item;
     const item = await this.createDriveFile({ name: input.name, mimeType: FOLDER_MIME, parents: [parent.id] });
     return { status: "created", item: itemReference(item) };
   }
 
   async createTextFile(input: CreateTextFileInput): Promise<{ status: "created"; item: ItemReference }> {
-    const parent = await this.managedParent(input.parent_id, true);
+    const parent = (await this.authorizedParent(input.parent_id, true)).item;
     const item = await this.uploadText({ name: input.name, mimeType: input.mime_type, parents: [parent.id] }, input.content, input.mime_type);
     return { status: "created", item: itemReference(item) };
   }
 
   async createGoogleDoc(input: CreateGoogleDocInput): Promise<{ status: "created"; item: ItemReference }> {
-    const parent = await this.managedParent(input.parent_id, true);
+    const parent = (await this.authorizedParent(input.parent_id, true)).item;
     const item = await this.createDriveFile({ name: input.name, mimeType: DOC_MIME, parents: [parent.id] });
     try {
       await this.populateDocument(item.id, input.content);
@@ -798,7 +966,7 @@ export class GoogleDriveClient {
   }
 
   async createGoogleSheet(input: CreateGoogleSheetInput): Promise<{ status: "created"; item: ItemReference }> {
-    const parent = await this.managedParent(input.parent_id, true);
+    const parent = (await this.authorizedParent(input.parent_id, true)).item;
     const item = await this.createDriveFile({ name: input.name, mimeType: SHEET_MIME, parents: [parent.id] });
     if (input.values.length > 0) {
       try {
@@ -811,7 +979,7 @@ export class GoogleDriveClient {
   }
 
   async createGooglePresentation(input: CreateGooglePresentationInput): Promise<{ status: "created"; item: ItemReference }> {
-    const parent = await this.managedParent(input.parent_id, true);
+    const parent = (await this.authorizedParent(input.parent_id, true)).item;
     const item = await this.createDriveFile({ name: input.name, mimeType: PRESENTATION_MIME, parents: [parent.id] });
     try {
       await this.replacePresentation(item.id, input.slides);
@@ -822,10 +990,14 @@ export class GoogleDriveClient {
   }
 
   async shareItem(input: ShareItemInput): Promise<{ status: "shared"; permission: PermissionReference }> {
-    await this.assertInsideWorkspace(input.item_id, { allowRoot: false });
+    const authorized = await this.authorizeItem(input.item_id);
+    this.assertNotWorkspaceRoot(authorized);
+    this.assertExternalFolderSupported(authorized);
+    this.requireCapability(authorized.item, "canShare");
     const query = new URLSearchParams({
       sendNotificationEmail: String(input.send_notification),
       fields: "id,type,role,emailAddress,domain",
+      supportsAllDrives: "true",
     });
     const result = await this.writeJson(`${DRIVE_API}/files/${encodePathPart(input.item_id)}/permissions?${query}`, "POST", {
         type: input.recipient_type,
@@ -840,15 +1012,43 @@ export class GoogleDriveClient {
         parsed.role !== input.role ||
         response.emailAddress !== input.email
       ) {
-        throw new GoogleDriveMcpError("provider_invalid_response");
+        throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
       }
       return parsed;
     });
     return { status: "shared", permission };
   }
 
+  async listAuthorizedItems(input: ListAuthorizedItemsInput): Promise<{ status: "ok"; items: ItemReference[]; next_cursor: string | null }> {
+    const page = await this.listFiles(
+      driveQuery(["trashed = false", authorizedTypeClause(input.type)]),
+      input.page_size,
+      input.cursor,
+    );
+    return {
+      status: "ok",
+      items: (page.files ?? []).map(itemReference),
+      next_cursor: page.nextPageToken ?? null,
+    };
+  }
+
+  async searchAuthorizedItems(input: SearchAuthorizedItemsInput): Promise<{ status: "ok"; items: ItemReference[]; next_cursor: null }> {
+    const escaped = escapeDriveQuery(input.query);
+    const page = await this.listFiles(
+      driveQuery([
+        "trashed = false",
+        authorizedTypeClause(input.type),
+        `(name contains '${escaped}' or fullText contains '${escaped}')`,
+      ]),
+      input.limit,
+      undefined,
+      null,
+    );
+    return { status: "ok", items: (page.files ?? []).map(itemReference), next_cursor: null };
+  }
+
   async listWorkspaceItems(input: ListWorkspaceItemsInput): Promise<{ status: "ok"; items: ItemReference[]; next_cursor: string | null }> {
-    const parent = await this.managedParent(input.parent_id, false);
+    const parent = await this.workspaceParent(input.parent_id);
     const page = await this.listFiles(`'${escapeDriveQuery(parent.id)}' in parents and trashed = false`, input.page_size, input.cursor);
     return {
       status: "ok",
@@ -873,46 +1073,49 @@ export class GoogleDriveClient {
     );
     for (const file of page.files ?? []) {
       try {
-        await this.assertInsideWorkspace(file.id);
-        matches.push(itemReference(file));
+        const authorized = await this.authorizeItem(file.id);
+        if (authorized.authorizationClass === "workspace") matches.push(itemReference(file));
       } catch (error) {
-        if (!(error instanceof GoogleDriveMcpError) || error.code !== "outside_workspace") throw error;
+        if (!(error instanceof GoogleDriveMcpError) || error.code !== "DRIVE_ITEM_NOT_AUTHORIZED") throw error;
       }
     }
     return { status: "ok", items: matches, next_cursor: page.nextPageToken ?? null };
   }
 
   async getItemMetadata(itemId: string): Promise<{ status: "ok"; item: ItemReference }> {
-    const { item } = await this.assertInsideWorkspace(itemId);
+    const { item } = await this.authorizeItem(itemId);
     return { status: "ok", item: itemReference(item) };
   }
 
   async readTextFile(input: ReadTextFileInput): Promise<{ status: "ok"; item: ItemReference; text: string; next_offset: number | null }> {
-    const { item } = await this.assertInsideWorkspace(input.item_id);
+    const { item } = await this.authorizeItem(input.item_id);
     this.assertMime(item, TEXT_MIMES);
+    this.requireCapability(item, "canDownload");
+    const mediaQuery = new URLSearchParams({ alt: "media", supportsAllDrives: "true" });
     const { response, body } = await this.readBytes(
-      `${DRIVE_API}/files/${encodePathPart(item.id)}?alt=media`,
+      `${DRIVE_API}/files/${encodePathPart(item.id)}?${mediaQuery}`,
       { method: "GET", headers: { Range: `bytes=0-${MAX_TEXT_RESPONSE_BYTES - 1}` } },
       MAX_TEXT_RESPONSE_BYTES,
     );
     const contentRange = response.headers.get("content-range");
     if (response.status === 206 && contentRange === null) {
-      throw new GoogleDriveMcpError("provider_invalid_response");
+      throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
     }
     if (contentRange !== null) {
       const match = /\/(\d+)$/u.exec(contentRange);
       if (match === null || Number(match[1]) > MAX_TEXT_RESPONSE_BYTES) {
-        throw new GoogleDriveMcpError("provider_invalid_response");
+        throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
       }
     }
     const text = decodeUtf8(body, "read");
-    if (text.length > MAX_TEXT_LENGTH) throw new GoogleDriveMcpError("provider_invalid_response");
+    if (text.length > MAX_TEXT_LENGTH) throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
     return { status: "ok", item: itemReference(item), ...sliceText(text, input.offset, input.limit) };
   }
 
   async readGoogleDoc(input: ReadGoogleDocInput): Promise<{ status: "ok"; item: ItemReference; text: string; next_offset: number | null }> {
-    const { item } = await this.assertInsideWorkspace(input.document_id);
+    const { item } = await this.authorizeItem(input.document_id);
     this.assertMime(item, DOC_MIME);
+    this.requireCapability(item, "canDownload");
     const body = singleDocumentBody(await this.document(item.id));
     return {
       status: "ok",
@@ -922,20 +1125,22 @@ export class GoogleDriveClient {
   }
 
   async readGoogleSheet(input: ReadGoogleSheetInput): Promise<{ status: "ok"; item: ItemReference; range: string; values: CellValue[][] }> {
-    const { item } = await this.assertInsideWorkspace(input.spreadsheet_id);
+    const { item } = await this.authorizeItem(input.spreadsheet_id);
     this.assertMime(item, SHEET_MIME);
+    this.requireCapability(item, "canDownload");
     const valueRange = asRecord(await this.readJson(`${SHEETS_API}/${encodePathPart(item.id)}/values/${encodePathPart(input.range)}`));
     const parsedValues = sheetValuesSchema.safeParse(valueRange.values ?? []);
-    if (!parsedValues.success) throw new GoogleDriveMcpError("provider_invalid_response");
+    if (!parsedValues.success) throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
     const values = parsedValues.data;
     return { status: "ok", item: itemReference(item), range: typeof valueRange.range === "string" ? valueRange.range : input.range, values };
   }
 
   async readGooglePresentation(input: ReadGooglePresentationInput): Promise<{ status: "ok"; item: ItemReference; slides: { index: number; texts: string[] }[]; truncated: boolean }> {
-    const { item } = await this.assertInsideWorkspace(input.presentation_id);
+    const { item } = await this.authorizeItem(input.presentation_id);
     this.assertMime(item, PRESENTATION_MIME);
+    this.requireCapability(item, "canDownload");
     const presentation = asRecord(await this.readJson(`${SLIDES_API}/${encodePathPart(item.id)}`));
-    if (!Array.isArray(presentation.slides)) throw new GoogleDriveMcpError("provider_invalid_response");
+    if (!Array.isArray(presentation.slides)) throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
     const slides = presentation.slides;
     const selected = input.slide_index === undefined ? slides.slice(0, MAX_SLIDES) : slides.slice(input.slide_index, input.slide_index + 1);
     let remainingCharacters = MAX_READ_LENGTH;
@@ -966,37 +1171,54 @@ export class GoogleDriveClient {
   }
 
   async replaceTextFile(input: ReplaceTextFileInput): Promise<{ status: "updated"; item: ItemReference }> {
-    const { item } = await this.assertInsideWorkspace(input.item_id, { allowRoot: false });
+    const authorized = await this.authorizeItem(input.item_id);
+    this.assertNotWorkspaceRoot(authorized);
+    const { item } = authorized;
     this.assertMime(item, TEXT_MIMES);
+    this.requireEditable(item);
     const updated = await this.uploadText({}, input.content, item.mimeType, "PATCH", item);
     return { status: "updated", item: itemReference(updated) };
   }
 
   async updateGoogleDoc(input: UpdateGoogleDocInput): Promise<{ status: "updated"; item: ItemReference }> {
-    const { item } = await this.assertInsideWorkspace(input.document_id, { allowRoot: false });
+    const authorized = await this.authorizeItem(input.document_id);
+    this.assertNotWorkspaceRoot(authorized);
+    const { item } = authorized;
     this.assertMime(item, DOC_MIME);
+    this.requireEditable(item);
     await this.replaceDocument(item.id, input.content);
     return { status: "updated", item: itemReference(item) };
   }
 
   async updateGoogleSheet(input: UpdateGoogleSheetInput): Promise<{ status: "updated"; item: ItemReference }> {
-    const { item } = await this.assertInsideWorkspace(input.spreadsheet_id, { allowRoot: false });
+    const authorized = await this.authorizeItem(input.spreadsheet_id);
+    this.assertNotWorkspaceRoot(authorized);
+    const { item } = authorized;
     this.assertMime(item, SHEET_MIME);
+    this.requireEditable(item);
     await this.writeSheet(item.id, input.range, input.values, input.value_input_option);
     return { status: "updated", item: itemReference(item) };
   }
 
   async updateGooglePresentation(input: UpdateGooglePresentationInput): Promise<{ status: "updated"; item: ItemReference }> {
-    const { item } = await this.assertInsideWorkspace(input.presentation_id, { allowRoot: false });
+    const authorized = await this.authorizeItem(input.presentation_id);
+    this.assertNotWorkspaceRoot(authorized);
+    const { item } = authorized;
     this.assertMime(item, PRESENTATION_MIME);
+    this.requireEditable(item);
     await this.replacePresentation(item.id, input.slides);
     return { status: "updated", item: itemReference(item) };
   }
 
   async renameItem(input: RenameItemInput): Promise<{ status: "renamed"; item: ItemReference }> {
-    const { item } = await this.assertInsideWorkspace(input.item_id, { allowRoot: false });
+    const authorized = await this.authorizeItem(input.item_id);
+    this.assertNotWorkspaceRoot(authorized);
+    this.assertExternalFolderSupported(authorized);
+    const { item } = authorized;
+    this.requireCapability(item, "canRename");
+    const query = new URLSearchParams({ fields: FILE_FIELDS, supportsAllDrives: "true" });
     const result = await this.writeJson(
-      `${DRIVE_API}/files/${encodePathPart(item.id)}?fields=${encodeURIComponent(FILE_FIELDS)}`,
+      `${DRIVE_API}/files/${encodePathPart(item.id)}?${query}`,
       "PATCH",
       { name: input.new_name },
     );
@@ -1013,13 +1235,27 @@ export class GoogleDriveClient {
   }
 
   async moveItem(itemId: string, destinationFolderId: string): Promise<{ status: "moved"; item: ItemReference }> {
-    const { item } = await this.assertInsideWorkspace(itemId, { allowRoot: false });
-    const destination = await this.managedParent(destinationFolderId, false);
-    if (item.id === destination.id) throw new GoogleDriveMcpError("invalid_input");
-    if (item.mimeType === FOLDER_MIME && (await this.isDescendantOf(destination.id, item.id))) {
-      throw new GoogleDriveMcpError("invalid_input");
+    const authorized = await this.authorizeItem(itemId);
+    this.assertNotWorkspaceRoot(authorized);
+    this.assertExternalFolderSupported(authorized);
+    const { item } = authorized;
+    this.requireCapability(item, "canEdit");
+    const destinationAuthorization = await this.authorizedParent(destinationFolderId, false);
+    const destination = destinationAuthorization.item;
+    if (item.driveId === destination.driveId) {
+      this.requireCapability(item, "canMoveItemWithinDrive");
+    } else if (item.driveId !== undefined) {
+      this.requireCapability(item, "canMoveItemOutOfDrive");
     }
-    const query = new URLSearchParams({ addParents: destination.id, fields: FILE_FIELDS });
+    if (item.id === destination.id) throw new GoogleDriveMcpError("INVALID_INPUT");
+    if (
+      item.mimeType === FOLDER_MIME &&
+      destinationAuthorization.authorizationClass === "workspace" &&
+      (await this.isDescendantOf(destination.id, item.id))
+    ) {
+      throw new GoogleDriveMcpError("INVALID_INPUT");
+    }
+    const query = new URLSearchParams({ addParents: destination.id, fields: FILE_FIELDS, supportsAllDrives: "true" });
     if ((item.parents ?? []).length > 0) query.set("removeParents", (item.parents ?? []).join(","));
     const result = await this.writeJson(`${DRIVE_API}/files/${encodePathPart(item.id)}?${query}`, "PATCH", {});
     const moved = parseWriteResult(() =>
@@ -1035,11 +1271,15 @@ export class GoogleDriveClient {
   }
 
   async copyItem(input: CopyItemInput): Promise<{ status: "copied"; item: ItemReference }> {
-    const { item } = await this.assertInsideWorkspace(input.item_id, { allowRoot: false });
-    if (item.mimeType === FOLDER_MIME) throw new GoogleDriveMcpError("invalid_input");
-    const parent = await this.managedParent(input.destination_folder_id, false);
+    const authorized = await this.authorizeItem(input.item_id);
+    this.assertNotWorkspaceRoot(authorized);
+    const { item } = authorized;
+    if (item.mimeType === FOLDER_MIME) throw new GoogleDriveMcpError("DRIVE_ITEM_TYPE_UNSUPPORTED");
+    this.requireCapability(item, "canCopy");
+    const parent = (await this.authorizedParent(input.destination_folder_id, false)).item;
+    const query = new URLSearchParams({ fields: FILE_FIELDS, supportsAllDrives: "true" });
     const result = await this.writeJson(
-      `${DRIVE_API}/files/${encodePathPart(item.id)}/copy?fields=${encodeURIComponent(FILE_FIELDS)}`,
+      `${DRIVE_API}/files/${encodePathPart(item.id)}/copy?${query}`,
       "POST",
       {
         parents: [parent.id],
@@ -1059,9 +1299,14 @@ export class GoogleDriveClient {
   }
 
   async trashItem(itemId: string): Promise<{ status: "trashed"; item: ItemReference }> {
-    const { item } = await this.assertInsideWorkspace(itemId, { allowRoot: false });
+    const authorized = await this.authorizeItem(itemId);
+    this.assertNotWorkspaceRoot(authorized);
+    this.assertExternalFolderSupported(authorized);
+    const { item } = authorized;
+    this.requireCapability(item, "canTrash");
+    const query = new URLSearchParams({ fields: FILE_FIELDS, supportsAllDrives: "true" });
     const result = await this.writeJson(
-      `${DRIVE_API}/files/${encodePathPart(item.id)}?fields=${encodeURIComponent(FILE_FIELDS)}`,
+      `${DRIVE_API}/files/${encodePathPart(item.id)}?${query}`,
       "PATCH",
       { trashed: true },
     );
@@ -1072,9 +1317,14 @@ export class GoogleDriveClient {
   }
 
   async restoreItem(itemId: string): Promise<{ status: "restored"; item: ItemReference }> {
-    const { item } = await this.assertInsideWorkspace(itemId, { allowRoot: false });
+    const authorized = await this.authorizeItem(itemId);
+    this.assertNotWorkspaceRoot(authorized);
+    this.assertExternalFolderSupported(authorized);
+    const { item } = authorized;
+    this.requireCapability(item, "canUntrash");
+    const query = new URLSearchParams({ fields: FILE_FIELDS, supportsAllDrives: "true" });
     const result = await this.writeJson(
-      `${DRIVE_API}/files/${encodePathPart(item.id)}?fields=${encodeURIComponent(FILE_FIELDS)}`,
+      `${DRIVE_API}/files/${encodePathPart(item.id)}?${query}`,
       "PATCH",
       { trashed: false },
     );
@@ -1086,7 +1336,7 @@ export class GoogleDriveClient {
 
   private permissionReference(permission: JsonRecord): PermissionReference {
     if (typeof permission.id !== "string" || typeof permission.type !== "string" || typeof permission.role !== "string") {
-      throw new GoogleDriveMcpError("provider_invalid_response");
+      throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
     }
     return {
       id: permission.id,
@@ -1098,15 +1348,19 @@ export class GoogleDriveClient {
   }
 
   async listItemPermissions(input: ListItemPermissionsInput): Promise<{ status: "ok"; permissions: PermissionReference[]; next_cursor: string | null }> {
-    await this.assertInsideWorkspace(input.item_id);
+    const authorized = await this.authorizeItem(input.item_id);
+    this.assertNotWorkspaceRoot(authorized);
+    this.assertExternalFolderSupported(authorized);
+    this.requireCapability(authorized.item, "canShare");
     const query = new URLSearchParams({
       fields: "nextPageToken,permissions(id,type,role,emailAddress,domain)",
       pageSize: String(input.page_size),
+      supportsAllDrives: "true",
     });
     if (input.cursor !== undefined) query.set("pageToken", input.cursor);
     const result = asRecord(await this.readJson(`${DRIVE_API}/files/${encodePathPart(input.item_id)}/permissions?${query}`));
     if (!Array.isArray(result.permissions) || result.permissions.length > input.page_size) {
-      throw new GoogleDriveMcpError("provider_invalid_response");
+      throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
     }
     if (
       result.nextPageToken !== undefined &&
@@ -1114,7 +1368,7 @@ export class GoogleDriveClient {
         result.nextPageToken.length === 0 ||
         result.nextPageToken.length > MAX_PAGE_TOKEN_LENGTH)
     ) {
-      throw new GoogleDriveMcpError("provider_invalid_response");
+      throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
     }
     const permissions = result.permissions.map((permission) => this.permissionReference(asRecord(permission)));
     return {
@@ -1125,8 +1379,11 @@ export class GoogleDriveClient {
   }
 
   async removeItemPermission(input: RemoveItemPermissionInput): Promise<{ status: "permission_removed"; item_id: string; permission_id: string }> {
-    await this.assertInsideWorkspace(input.item_id, { allowRoot: false });
-    const query = new URLSearchParams({ fields: "id,type,role,emailAddress,domain" });
+    const authorized = await this.authorizeItem(input.item_id);
+    this.assertNotWorkspaceRoot(authorized);
+    this.assertExternalFolderSupported(authorized);
+    this.requireCapability(authorized.item, "canShare");
+    const query = new URLSearchParams({ fields: "id,type,role,emailAddress,domain", supportsAllDrives: "true" });
     const target = this.permissionReference(
       asRecord(
         await this.readJson(
@@ -1134,9 +1391,10 @@ export class GoogleDriveClient {
         ),
       ),
     );
-    if (target.role === "owner") throw new GoogleDriveMcpError("invalid_input");
+    if (target.role === "owner") throw new GoogleDriveMcpError("INVALID_INPUT");
+    const deleteQuery = new URLSearchParams({ supportsAllDrives: "true" });
     await this.deleteWrite(
-      `${DRIVE_API}/files/${encodePathPart(input.item_id)}/permissions/${encodePathPart(input.permission_id)}`,
+      `${DRIVE_API}/files/${encodePathPart(input.item_id)}/permissions/${encodePathPart(input.permission_id)}?${deleteQuery}`,
     );
     return { status: "permission_removed", item_id: input.item_id, permission_id: input.permission_id };
   }

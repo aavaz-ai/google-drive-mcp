@@ -34,7 +34,7 @@ export function createManagedMcpServer(options: ManagedMcpServerOptions): Server
       (request.params.arguments ?? {}) as Record<string, unknown>,
       client,
     );
-    return result ?? toToolError(new GoogleDriveMcpError('invalid_input'));
+    return result ?? toToolError(new GoogleDriveMcpError('INVALID_INPUT'));
   });
   return server;
 }

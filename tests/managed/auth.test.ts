@@ -15,7 +15,7 @@ describe("bearer contract", () => {
       try {
         validateManagedConnectorBearer(value);
       } catch (error) {
-        expect(error).toMatchObject({ code: "authentication_failed" });
+        expect(error).toMatchObject({ code: "AUTHENTICATION_FAILED" });
       }
     },
   );

@@ -1,7 +1,7 @@
 {
     "name": "@enterpret/google-drive-mcp",
-    "version": "0.2.0",
-    "description": "Enterpret-managed Google Drive MCP for app-created content, based on piotr-agier/google-drive-mcp",
+    "version": "0.3.0",
+    "description": "Enterpret-managed Google Drive MCP for drive.file-authorized content, based on piotr-agier/google-drive-mcp",
     "license": "MIT",
     "author": "Piotr Agier <piotr.agier@gmail.com>",
     "contributors": [
@@ -68,7 +68,8 @@
         "lint:types": "npm run typecheck",
         "lint:eslint": "eslint src/",
         "check": "npm run lint && npm test && npm run build",
-        "smoke:pack": "node scripts/pack-smoke.mjs"
+        "smoke:pack": "node scripts/pack-smoke.mjs",
+        "smoke:live:fresh": "node scripts/live-fresh-process-smoke.mjs"
     },
     "dependencies": {
         "@modelcontextprotocol/sdk": "1.29.0",
