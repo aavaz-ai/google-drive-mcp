@@ -15,6 +15,8 @@ const expectedTools = [
   "create_google_sheet",
   "create_google_presentation",
   "share_item",
+  "list_authorized_items",
+  "search_authorized_items",
   "list_workspace_items",
   "search_workspace_items",
   "get_item_metadata",

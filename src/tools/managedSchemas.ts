@@ -16,7 +16,7 @@ const itemNameSchema = z
   .min(1)
   .max(255)
   .regex(/^(?!\s)(?!.*\s$)[^\u0000-\u001f\u007f/]+$/u, "must be a bounded Drive item name");
-const parentSchema = itemIdSchema.optional().describe("Managed destination folder ID; defaults to the Enterpret root.");
+const parentSchema = itemIdSchema.optional().describe("Authorized destination folder ID; defaults to the managed Enterpret root.");
 const contentSchema = z.string().max(MAX_TEXT_LENGTH).regex(/^[^\u0000]*$/u, "must not contain NUL");
 const readWindowSchema = {
   offset: z.number().int().min(0).max(MAX_TEXT_LENGTH).optional().default(0),
@@ -109,6 +109,17 @@ const pageSchema = {
   page_size: z.number().int().min(1).max(100).optional().default(50),
   cursor: z.string().min(1).max(2_048).regex(/^[^\u0000-\u001f\u007f]+$/u).optional(),
 };
+export const authorizedItemTypeSchema = z.enum(["file", "folder", "doc", "sheet", "slides", "blob"]);
+export const listAuthorizedItemsSchema = z
+  .object({ type: authorizedItemTypeSchema.optional(), ...pageSchema })
+  .strict();
+export const searchAuthorizedItemsSchema = z
+  .object({
+    query: z.string().min(1).max(200).regex(/^[^\u0000-\u001f\u007f]+$/u),
+    type: authorizedItemTypeSchema.optional(),
+    limit: z.number().int().min(1).max(100).optional().default(50),
+  })
+  .strict();
 export const listWorkspaceItemsSchema = z
   .object({ parent_id: itemIdSchema.optional(), ...pageSchema })
   .strict();
@@ -264,6 +275,9 @@ export type CreateGoogleDocInput = z.infer<typeof createGoogleDocSchema>;
 export type CreateGoogleSheetInput = z.infer<typeof createGoogleSheetSchema>;
 export type CreateGooglePresentationInput = z.infer<typeof createGooglePresentationSchema>;
 export type ShareItemInput = z.infer<typeof shareItemSchema>;
+export type AuthorizedItemType = z.infer<typeof authorizedItemTypeSchema>;
+export type ListAuthorizedItemsInput = z.infer<typeof listAuthorizedItemsSchema>;
+export type SearchAuthorizedItemsInput = z.infer<typeof searchAuthorizedItemsSchema>;
 export type ListWorkspaceItemsInput = z.infer<typeof listWorkspaceItemsSchema>;
 export type SearchWorkspaceItemsInput = z.infer<typeof searchWorkspaceItemsSchema>;
 export type ReadTextFileInput = z.infer<typeof readTextFileSchema>;

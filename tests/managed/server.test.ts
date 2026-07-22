@@ -49,11 +49,14 @@ describe("MCP surface", () => {
         "raw_query",
         "generic_rest",
         "upload_file",
+        "replace_file_content",
         "download_file",
+        "export_google_file",
         "create_public_link",
         "transfer_ownership",
         "delete_item",
         "list_entire_drive",
+        "list_authorized_folders",
       ]),
     );
 
@@ -62,6 +65,15 @@ describe("MCP surface", () => {
     expect(sharing?.inputSchema.properties?.role).toMatchObject({ enum: ["reader", "commenter", "writer"] });
     expect(tools.find((tool) => tool.name === "read_google_doc")?.description).toContain("single-tab");
     expect(tools.find((tool) => tool.name === "update_google_doc")?.description).toContain("single-tab");
+    expect(tools.find((tool) => tool.name === "list_authorized_items")?.inputSchema.properties?.type).toMatchObject({
+      enum: ["file", "folder", "doc", "sheet", "slides", "blob"],
+    });
+    expect(tools.find((tool) => tool.name === "search_authorized_items")?.inputSchema.properties?.limit).toMatchObject({
+      minimum: 1,
+      maximum: 100,
+    });
+    expect(tools.find((tool) => tool.name === "search_authorized_items")?.inputSchema.properties).not.toHaveProperty("q");
+    expect(tools.find((tool) => tool.name === "search_authorized_items")?.inputSchema.properties).not.toHaveProperty("raw_query");
     const exactStatuses: Record<string, string> = {
       create_folder: "created",
       create_text_file: "created",
@@ -130,10 +142,10 @@ describe("MCP surface", () => {
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({
       status: "error",
-      error: { code: "provider_unavailable", outcome: "not_completed", retryable: true },
+      error: { code: "PROVIDER_UNAVAILABLE", outcome: "not_completed", retryable: true },
     });
     expect(attempts).toBe(3);
-    expect(serialized).toContain("provider_unavailable");
+    expect(serialized).toContain("PROVIDER_UNAVAILABLE");
     expect(serialized).not.toContain("test_bearer");
     expect(serialized).not.toContain("GOOGLE_RESPONSE_BODY_MARKER");
   });
@@ -159,6 +171,9 @@ describe("MCP surface", () => {
         arguments: { item_id: "item_id", recipient_type: "anyone", role: "owner", email: "x@example.com" },
       }),
       client.callTool({ name: "delete_item", arguments: { item_id: "item_id" } }),
+      client.callTool({ name: "search_authorized_items", arguments: { q: "name = 'x'" } }),
+      client.callTool({ name: "search_authorized_items", arguments: { query: "x", raw_query: "trashed = false" } }),
+      client.callTool({ name: "search_authorized_items", arguments: { query: "x", limit: 101 } }),
       client.callTool({
         name: "read_google_sheet",
         arguments: { spreadsheet_id: "sheet_id", range: "A:A" },

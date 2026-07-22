@@ -25,6 +25,19 @@ function driveFile(
     modifiedTime: "2026-07-01T00:00:00.000Z",
     trashed: false,
     description: name === "Enterpret" ? WORKSPACE_DESCRIPTION : undefined,
+    capabilities: {
+      canEdit: true,
+      canCopy: true,
+      canAddChildren: mimeType === FOLDER_MIME,
+      canDownload: mimeType !== FOLDER_MIME,
+      canRename: true,
+      canTrash: true,
+      canUntrash: true,
+      canModifyContent: true,
+      canMoveItemWithinDrive: true,
+      canMoveItemOutOfDrive: true,
+      canShare: true,
+    },
   };
 }
 
@@ -70,20 +83,19 @@ describe("managed workspace", () => {
     });
 
     await expect(client.listWorkspaceItems({ page_size: 50 })).rejects.toMatchObject({
-      code: "workspace_not_initialized",
+      code: "WORKSPACE_NOT_INITIALIZED",
     });
     expect(writes).toBe(0);
   });
 
-  it("fails closed before sharing an outside-workspace item", async () => {
+  it("fails closed before sharing an item not exposed to the drive.file bearer", async () => {
     const workspace = driveFile("workspace_id", "Enterpret");
     let permissionWrites = 0;
     const client = new GoogleDriveClient("bearer", {
       fetch: async (input, init) => {
         const { url, method } = requestParts(input, init);
         if (method === "GET" && url.pathname === "/drive/v3/files") return Response.json({ files: [workspace] });
-        if (method === "GET" && url.pathname.endsWith("/outside_id")) return Response.json(driveFile("outside_id", "Outside", ["other_root"], "text/plain"));
-        if (method === "GET" && url.pathname.endsWith("/other_root")) return Response.json(driveFile("other_root", "Other root"));
+        if (method === "GET" && url.pathname.endsWith("/outside_id")) return Response.json({}, { status: 404 });
         if (url.pathname.endsWith("/permissions")) permissionWrites += 1;
         throw new Error(`unexpected ${method} ${url.pathname}`);
       },
@@ -97,11 +109,11 @@ describe("managed workspace", () => {
         role: "reader",
         send_notification: true,
       }),
-    ).rejects.toMatchObject({ code: "outside_workspace" });
+    ).rejects.toMatchObject({ code: "DRIVE_ITEM_NOT_AUTHORIZED" });
     expect(permissionWrites).toBe(0);
   });
 
-  it("fails closed before creating under an outside-workspace parent", async () => {
+  it("creates under a directly authorized external folder with canAddChildren", async () => {
     const workspace = driveFile("workspace_id", "Enterpret");
     let writes = 0;
     const client = new GoogleDriveClient("bearer", {
@@ -109,16 +121,21 @@ describe("managed workspace", () => {
         const { url, method } = requestParts(input, init);
         if (method !== "GET") writes += 1;
         if (method === "GET" && url.pathname === "/drive/v3/files") return Response.json({ files: [workspace] });
-        if (method === "GET" && url.pathname.endsWith("/outside_folder")) return Response.json(driveFile("outside_folder", "Outside", ["other_root"]));
-        if (method === "GET" && url.pathname.endsWith("/other_root")) return Response.json(driveFile("other_root", "Other root"));
+        if (method === "GET" && url.pathname.endsWith("/outside_folder")) return Response.json(driveFile("outside_folder", "Selected folder"));
+        if (method === "POST" && url.pathname === "/drive/v3/files") {
+          expect(url.searchParams.get("supportsAllDrives")).toBe("true");
+          expect(JSON.parse(String(init?.body))).toMatchObject({ parents: ["outside_folder"] });
+          return Response.json(driveFile("created_child", "Created", ["outside_folder"]));
+        }
         throw new Error(`unexpected ${method} ${url.pathname}`);
       },
     });
 
-    await expect(client.createFolder({ name: "Blocked", parent_id: "outside_folder" })).rejects.toMatchObject({
-      code: "outside_workspace",
+    await expect(client.createFolder({ name: "Created", parent_id: "outside_folder" })).resolves.toMatchObject({
+      status: "created",
+      item: { id: "created_child", parent_ids: ["outside_folder"] },
     });
-    expect(writes).toBe(0);
+    expect(writes).toBe(1);
   });
 
   it("fails closed before moving a folder into any of its descendants", async () => {
@@ -142,7 +159,7 @@ describe("managed workspace", () => {
       },
     });
 
-    await expect(client.moveItem("folder_a", "folder_b")).rejects.toMatchObject({ code: "invalid_input" });
+    await expect(client.moveItem("folder_a", "folder_b")).rejects.toMatchObject({ code: "INVALID_INPUT" });
     expect(writes).toBe(0);
   });
 
@@ -165,7 +182,7 @@ describe("provider safety", () => {
     });
 
     await expect(client.ensureWorkspace()).rejects.toMatchObject({
-      code: "provider_invalid_response",
+      code: "PROVIDER_INVALID_RESPONSE",
       outcome: "not_completed",
     });
   });
@@ -207,7 +224,7 @@ describe("provider safety", () => {
     });
 
     await expect(client.createFolder({ name: "Report", parent_id: undefined })).rejects.toMatchObject({
-      code: "write_unknown_outcome",
+      code: "WRITE_UNKNOWN_OUTCOME",
       outcome: "unknown",
       providerStatus: 503,
     } satisfies Partial<GoogleDriveMcpError>);
@@ -240,7 +257,7 @@ describe("provider safety", () => {
     await expect(
       client.createGoogleDoc({ name: "Report", content: "Body", parent_id: undefined }),
     ).rejects.toMatchObject({
-      code: "write_unknown_outcome",
+      code: "WRITE_UNKNOWN_OUTCOME",
       outcome: "unknown",
       providerStatus: 400,
     });

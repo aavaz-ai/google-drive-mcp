@@ -4,11 +4,11 @@ import { GoogleDriveMcpError } from './managedErrors.js';
 /** Validate the short-lived bearer injected by Enterpret's connector runtime. */
 export function validateManagedConnectorBearer(value: string | undefined): string {
   if (value === undefined || value.trim().length === 0) {
-    throw new GoogleDriveMcpError('authentication_failed');
+    throw new GoogleDriveMcpError('AUTHENTICATION_FAILED');
   }
   const bearer = value.trim();
   if (!/^[A-Za-z0-9\-._~+/]+=*$/.test(bearer)) {
-    throw new GoogleDriveMcpError('authentication_failed');
+    throw new GoogleDriveMcpError('AUTHENTICATION_FAILED');
   }
   return bearer;
 }

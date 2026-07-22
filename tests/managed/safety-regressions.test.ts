@@ -23,6 +23,19 @@ function driveFile(id: string, name: string, parents: string[] = [], mimeType = 
     modifiedTime: '2026-07-01T00:00:00.000Z',
     trashed,
     description: name === 'Enterpret' ? WORKSPACE_DESCRIPTION : undefined,
+    capabilities: {
+      canEdit: true,
+      canCopy: true,
+      canAddChildren: mimeType === FOLDER_MIME,
+      canDownload: mimeType !== FOLDER_MIME,
+      canRename: true,
+      canTrash: true,
+      canUntrash: true,
+      canModifyContent: true,
+      canMoveItemWithinDrive: true,
+      canMoveItemOutOfDrive: true,
+      canShare: true,
+    },
   };
 }
 
@@ -78,11 +91,11 @@ describe('managed safety regressions', () => {
       email: 'person@example.com',
       role: 'reader',
       send_notification: true,
-    })).rejects.toMatchObject({ code: 'outside_workspace' });
+    })).rejects.toMatchObject({ code: 'DRIVE_CAPABILITY_DENIED' });
     await expect(client.removeItemPermission({
       item_id: workspace.id,
       permission_id: 'permission_id',
-    })).rejects.toMatchObject({ code: 'outside_workspace' });
+    })).rejects.toMatchObject({ code: 'DRIVE_CAPABILITY_DENIED' });
     expect(permissionCalls).toBe(0);
   });
 
@@ -137,7 +150,7 @@ describe('managed safety regressions', () => {
       }),
     });
 
-    await expect(client.moveItem(source.id, destination.id)).rejects.toMatchObject({ code: 'invalid_input' });
+    await expect(client.moveItem(source.id, destination.id)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
     expect(writes).toBe(0);
   });
 
@@ -152,7 +165,7 @@ describe('managed safety regressions', () => {
       },
     });
 
-    await expect(client.ensureWorkspace()).rejects.toMatchObject({ code: 'provider_invalid_response' });
+    await expect(client.ensureWorkspace()).rejects.toMatchObject({ code: 'PROVIDER_INVALID_RESPONSE' });
     expect(calls).toBe(10);
     expect(writes).toBe(0);
   });
@@ -163,7 +176,7 @@ describe('managed safety regressions', () => {
       fetch: async () => new Response('{}', { status: 200, headers: oversizedHeaders }),
     });
     await expect(readClient.ensureWorkspace()).rejects.toMatchObject({
-      code: 'provider_invalid_response',
+      code: 'PROVIDER_INVALID_RESPONSE',
       outcome: 'not_completed',
     });
 
@@ -176,7 +189,7 @@ describe('managed safety regressions', () => {
       }),
     });
     await expect(writeClient.createFolder({ name: 'Folder', parent_id: undefined })).rejects.toMatchObject({
-      code: 'write_unknown_outcome',
+      code: 'WRITE_UNKNOWN_OUTCOME',
       outcome: 'unknown',
     });
     expect(writes).toBe(1);
@@ -264,10 +277,10 @@ describe('managed safety regressions', () => {
     });
 
     await expect(client.readGoogleDoc({ document_id: document.id, offset: 0, limit: 10 })).rejects.toMatchObject({
-      code: 'invalid_input',
+      code: 'INVALID_INPUT',
     });
     await expect(client.updateGoogleDoc({ document_id: document.id, content: 'replacement' })).rejects.toMatchObject({
-      code: 'invalid_input',
+      code: 'INVALID_INPUT',
     });
     expect(writes).toBe(0);
   });
@@ -288,7 +301,7 @@ describe('managed safety regressions', () => {
       },
     });
     await expect(driveClient.getItemMetadata('malformed_id')).rejects.toMatchObject({
-      code: 'provider_invalid_response',
+      code: 'PROVIDER_INVALID_RESPONSE',
     });
 
     let writes = 0;
@@ -306,7 +319,7 @@ describe('managed safety regressions', () => {
       ),
     });
     await expect(docsClient.updateGoogleDoc({ document_id: document.id, content: 'replacement' })).rejects.toMatchObject({
-      code: 'provider_invalid_response',
+      code: 'PROVIDER_INVALID_RESPONSE',
     });
 
     const slidesClient = new GoogleDriveClient('bearer', {
@@ -322,7 +335,7 @@ describe('managed safety regressions', () => {
     await expect(slidesClient.updateGooglePresentation({
       presentation_id: presentation.id,
       slides: [{ title: 'Title', body: 'Body' }],
-    })).rejects.toMatchObject({ code: 'provider_invalid_response' });
+    })).rejects.toMatchObject({ code: 'PROVIDER_INVALID_RESPONSE' });
     expect(writes).toBe(0);
   });
 
@@ -415,7 +428,7 @@ describe('managed safety regressions', () => {
       });
 
       await expect(testCase.run(client), testCase.name).rejects.toMatchObject({
-        code: 'write_unknown_outcome',
+        code: 'WRITE_UNKNOWN_OUTCOME',
         outcome: 'unknown',
       } satisfies Partial<GoogleDriveMcpError>);
       expect(writes, testCase.name).toBe(1);
