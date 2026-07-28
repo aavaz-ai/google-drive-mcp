@@ -5,7 +5,7 @@ import {
   MAX_READ_LENGTH,
   MAX_SLIDES,
   MAX_TEXT_LENGTH,
-  sheetValuesSchema,
+  sheetReadValuesSchema,
   type CellValue,
   type CopyItemInput,
   type CreateFolderInput,
@@ -1129,7 +1129,7 @@ export class GoogleDriveClient {
     this.assertMime(item, SHEET_MIME);
     this.requireCapability(item, "canDownload");
     const valueRange = asRecord(await this.readJson(`${SHEETS_API}/${encodePathPart(item.id)}/values/${encodePathPart(input.range)}`));
-    const parsedValues = sheetValuesSchema.safeParse(valueRange.values ?? []);
+    const parsedValues = sheetReadValuesSchema.safeParse(valueRange.values ?? []);
     if (!parsedValues.success) throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
     const values = parsedValues.data;
     return { status: "ok", item: itemReference(item), range: typeof valueRange.range === "string" ? valueRange.range : input.range, values };

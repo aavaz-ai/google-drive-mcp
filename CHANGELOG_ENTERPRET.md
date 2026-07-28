@@ -2,6 +2,10 @@
 
 All notable changes to this package will be documented here.
 
+## 0.3.1
+
+- Preserve bounded sparse Google Sheets read responses without padding while keeping create and update values rectangular.
+
 ## 0.3.0
 
 - Add runtime-only authorization for resources exposed directly to the active `drive.file` bearer while retaining the managed workspace authorization class.
