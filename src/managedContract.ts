@@ -2,7 +2,7 @@ import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 
 export const GOOGLE_DRIVE_OAUTH_BEARER_ENV = "GOOGLE_DRIVE_OAUTH_BEARER" as const;
 export const GOOGLE_DRIVE_MCP_PACKAGE_NAME = "@enterpret/google-drive-mcp" as const;
-export const GOOGLE_DRIVE_MCP_VERSION = "0.3.0" as const;
+export const GOOGLE_DRIVE_MCP_VERSION = "0.3.1" as const;
 export const GOOGLE_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file" as const;
 
 export const GOOGLE_DRIVE_TOOL_NAMES = [

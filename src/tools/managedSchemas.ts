@@ -70,6 +70,23 @@ export const sheetValuesSchema = z
       context.addIssue({ code: "custom", message: `must contain at most ${MAX_SHEET_TEXT_LENGTH} text characters` });
     }
   });
+export const sheetReadValuesSchema = z
+  .array(z.array(cellValueSchema).max(MAX_SHEET_CELLS))
+  .max(MAX_SHEET_CELLS)
+  .superRefine((rows, context) => {
+    const cellCount = rows.reduce((count, row) => count + row.length, 0);
+    if (cellCount > MAX_SHEET_CELLS) {
+      context.addIssue({ code: "custom", message: `must contain at most ${MAX_SHEET_CELLS} cells` });
+    }
+    const textLength = rows.reduce<number>(
+      (total, row) =>
+        total + row.reduce<number>((rowTotal, cell) => rowTotal + (typeof cell === "string" ? cell.length : 0), 0),
+      0,
+    );
+    if (textLength > MAX_SHEET_TEXT_LENGTH) {
+      context.addIssue({ code: "custom", message: `must contain at most ${MAX_SHEET_TEXT_LENGTH} text characters` });
+    }
+  });
 const nonEmptySheetValuesSchema = sheetValuesSchema.refine((rows) => rows.length > 0, {
   message: "must contain at least one row",
 });
@@ -240,7 +257,7 @@ export const textReadResultSchema = z
   .object({ status: z.literal("ok"), item: itemRefSchema, text: z.string(), next_offset: z.number().nullable() })
   .strict();
 export const sheetReadResultSchema = z
-  .object({ status: z.literal("ok"), item: itemRefSchema, range: z.string(), values: z.array(z.array(cellValueSchema)) })
+  .object({ status: z.literal("ok"), item: itemRefSchema, range: z.string(), values: sheetReadValuesSchema })
   .strict();
 export const presentationReadResultSchema = z
   .object({

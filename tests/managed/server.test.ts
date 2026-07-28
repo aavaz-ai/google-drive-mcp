@@ -74,6 +74,10 @@ describe("MCP surface", () => {
     });
     expect(tools.find((tool) => tool.name === "search_authorized_items")?.inputSchema.properties).not.toHaveProperty("q");
     expect(tools.find((tool) => tool.name === "search_authorized_items")?.inputSchema.properties).not.toHaveProperty("raw_query");
+    expect(tools.find((tool) => tool.name === "read_google_sheet")?.outputSchema?.properties?.values).toMatchObject({
+      maxItems: 10_000,
+      items: { maxItems: 10_000 },
+    });
     const exactStatuses: Record<string, string> = {
       create_folder: "created",
       create_text_file: "created",
