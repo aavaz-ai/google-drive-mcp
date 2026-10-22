@@ -368,8 +368,7 @@ function assertDriveFilePostcondition(
   return file;
 }
 
-function singleDocumentBody(document: JsonRecord): JsonRecord {
-  if (document.tabs === undefined) return asRecord(document.body);
+function documentTabs(document: JsonRecord): JsonRecord[] {
   if (!Array.isArray(document.tabs)) throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
   const tabs: JsonRecord[] = [];
   const collectTabs = (values: unknown[]): void => {
@@ -384,9 +383,14 @@ function singleDocumentBody(document: JsonRecord): JsonRecord {
   };
   collectTabs(document.tabs);
   if (tabs.length === 0) throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
+  return tabs;
+}
+
+function singleDocumentBody(document: JsonRecord): JsonRecord {
+  if (document.tabs === undefined) return asRecord(document.body);
+  const tabs = documentTabs(document);
   if (tabs.length > 1) {
-    // V0 deliberately rejects multi-tab Docs instead of silently reading or
-    // replacing only one tab and claiming complete-document behavior.
+    // Whole-document writes must not silently replace only one tab.
     throw new GoogleDriveMcpError("INVALID_INPUT");
   }
   return asRecord(asRecord(tabs[0]?.documentTab).body);
@@ -427,6 +431,28 @@ function extractDocumentText(value: unknown, maximumCharacters = MAX_TEXT_LENGTH
     }
   };
   visit(value);
+  return fragments.join("");
+}
+
+function readDocumentText(document: JsonRecord): string {
+  if (document.tabs === undefined) return extractDocumentText(documentContent(asRecord(document.body)));
+  const tabs = documentTabs(document);
+  const fragments: string[] = [];
+  let remaining = MAX_TEXT_LENGTH;
+  for (const [index, tab] of tabs.entries()) {
+    const body = asRecord(asRecord(tab.documentTab).body);
+    let heading = "";
+    if (tabs.length > 1) {
+      const title = tab.tabProperties === undefined ? undefined : asRecord(tab.tabProperties).title;
+      if (title !== undefined && typeof title !== "string") throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
+      heading = `${index === 0 ? "" : "\n"}[Tab: ${title ?? index + 1}]\n`;
+    }
+    remaining -= heading.length;
+    if (remaining < 0) throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
+    const text = extractDocumentText(documentContent(body), remaining);
+    remaining -= text.length;
+    fragments.push(heading, text);
+  }
   return fragments.join("");
 }
 
@@ -1116,11 +1142,11 @@ export class GoogleDriveClient {
     const { item } = await this.authorizeItem(input.document_id);
     this.assertMime(item, DOC_MIME);
     this.requireCapability(item, "canDownload");
-    const body = singleDocumentBody(await this.document(item.id));
+    const text = readDocumentText(await this.document(item.id));
     return {
       status: "ok",
       item: itemReference(item),
-      ...sliceText(extractDocumentText(documentContent(body)), input.offset, input.limit),
+      ...sliceText(text, input.offset, input.limit),
     };
   }
 

@@ -250,7 +250,7 @@ describe('managed safety regressions', () => {
     expect(ranges).toEqual(['bytes=0-399999', 'bytes=0-399999']);
   });
 
-  it('rejects multi-tab Docs for reads and updates before dispatching a write', async () => {
+  it('reads multi-tab Docs but still rejects updates before dispatching a write', async () => {
     const workspace = driveFile('workspace_id', 'Enterpret');
     const document = driveFile('doc_id', 'Document', [workspace.id], DOC_MIME);
     let writes = 0;
@@ -276,8 +276,8 @@ describe('managed safety regressions', () => {
       ),
     });
 
-    await expect(client.readGoogleDoc({ document_id: document.id, offset: 0, limit: 10 })).rejects.toMatchObject({
-      code: 'INVALID_INPUT',
+    await expect(client.readGoogleDoc({ document_id: document.id, offset: 0, limit: 100 })).resolves.toMatchObject({
+      text: '[Tab: 1]\n\n[Tab: 2]\n', next_offset: null,
     });
     await expect(client.updateGoogleDoc({ document_id: document.id, content: 'replacement' })).rejects.toMatchObject({
       code: 'INVALID_INPUT',

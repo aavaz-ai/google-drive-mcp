@@ -63,7 +63,7 @@ describe("MCP surface", () => {
     const sharing = tools.find((tool) => tool.name === "share_item");
     expect(sharing?.inputSchema.properties?.recipient_type).toMatchObject({ enum: ["user", "group"] });
     expect(sharing?.inputSchema.properties?.role).toMatchObject({ enum: ["reader", "commenter", "writer"] });
-    expect(tools.find((tool) => tool.name === "read_google_doc")?.description).toContain("single-tab");
+    expect(tools.find((tool) => tool.name === "read_google_doc")?.description).toContain("nested tabs");
     expect(tools.find((tool) => tool.name === "update_google_doc")?.description).toContain("single-tab");
     expect(tools.find((tool) => tool.name === "list_authorized_items")?.inputSchema.properties?.type).toMatchObject({
       enum: ["file", "folder", "doc", "sheet", "slides", "blob"],

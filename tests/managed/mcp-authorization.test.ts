@@ -96,6 +96,43 @@ function expectMcpError(result: ClientToolResult, code: string, messageFragment:
 }
 
 describe("Phase 1 MCP authorization boundary", () => {
+  it("reads all authorized Doc tabs through MCP, paginates, and rechecks access on every page", async () => {
+    const picked = driveFile("picked_doc", "FDE sync", DOC_MIME);
+    let authorized = true;
+    let contentReads = 0;
+    const client = await connectedClient(async (input, init) => {
+      const url = new URL(String(input));
+      expect(init?.method ?? "GET").toBe("GET");
+      if (url.hostname === "docs.googleapis.com") {
+        contentReads += 1;
+        expect(url.searchParams.get("includeTabsContent")).toBe("true");
+        return Response.json({ tabs: ["Notes", "Transcript"].map((title) => ({
+          tabProperties: { title },
+          documentTab: { body: { content: [{ paragraph: { elements: [{ textRun: { content: `${title} body\n` } }] } }] } },
+        })) });
+      }
+      if (url.pathname === "/drive/v3/files") return Response.json({ files: [] });
+      if (url.pathname.endsWith(`/${picked.id}`)) {
+        return authorized ? Response.json(picked) : Response.json({}, { status: 404 });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const first = await client.callTool({ name: "read_google_doc", arguments: { document_id: picked.id, offset: 0, limit: 24 } });
+    expect(first.isError).not.toBe(true);
+    expect(first.structuredContent).toMatchObject({
+      status: "ok", item: { id: picked.id }, text: "[Tab: Notes]\nNotes body\n", next_offset: 24,
+    });
+    expect(JSON.parse(textContent(first))).toEqual(first.structuredContent);
+    const second = await client.callTool({ name: "read_google_doc", arguments: { document_id: picked.id, offset: 24, limit: 100 } });
+    expect(second.isError).not.toBe(true);
+    expect(second.structuredContent).toMatchObject({ text: "\n[Tab: Transcript]\nTranscript body\n", next_offset: null });
+    expect(JSON.parse(textContent(second))).toEqual(second.structuredContent);
+    authorized = false;
+    const denied = await client.callTool({ name: "read_google_doc", arguments: { document_id: picked.id, offset: 24, limit: 100 } });
+    expectMcpError(denied, "DRIVE_ITEM_NOT_AUTHORIZED", "not authorized");
+    expect(contentReads).toBe(2);
+  });
+
   it("lists and searches authorized items with structured paging, bounds, escaped server queries, and Drive compatibility flags", async () => {
     const folder = driveFile("picked_folder", "Picked folder", FOLDER_MIME, [], {
       canAddChildren: true,
