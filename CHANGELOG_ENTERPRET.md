@@ -2,6 +2,13 @@
 
 All notable changes to this package will be documented here.
 
+## 0.3.3
+
+- Extract bounded text from authorized PDF, DOCX, XLSX, PPTX, ODT, ODS, ODP, and RTF files through the existing `read_text_file` action.
+- Contain extraction in disposable workers with download, expansion, text, concurrency, memory, and time bounds; report encrypted, scanned, damaged, and incomplete documents explicitly.
+- Keep the existing `drive.file` scope, download restrictions, per-call authorization, and 27-tool surface. Require Node.js 22.13.0 or later.
+- Exercise actual PDF/RTF extraction and denial of an unselected file in the packed-artifact smoke test.
+
 ## 0.3.2
 
 - Read all authorized Google Docs tabs and nested tabs with labeled, bounded pagination while retaining single-tab-only whole-document updates.
