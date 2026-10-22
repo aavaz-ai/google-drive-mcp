@@ -2,7 +2,7 @@
 
 Enterpret's small, self-hosted Google Drive MCP for creating and managing app-authorized content inside one marked `Enterpret` folder and content directly authorized through the host's Picker flow. It is stdio-only, accepts a host-supplied bearer, and uses only `https://www.googleapis.com/auth/drive.file`.
 
-This fork publishes `@enterpret/google-drive-mcp`; the current source version is `0.3.2`. The package builds one small `src/managedIndex.ts` sibling entrypoint over the focused managed-workspace modules. The original upstream entrypoint, authentication, tools, and tests remain intact in their original paths for future merges and regression coverage, but they are not reachable through the Enterpret package executable.
+This fork publishes `@enterpret/google-drive-mcp`; the current source version is `0.3.3`. The package builds one small `src/managedIndex.ts` sibling entrypoint over the focused managed-workspace modules. The original upstream entrypoint, authentication, tools, and tests remain intact in their original paths for future merges and regression coverage, but they are not reachable through the Enterpret package executable.
 
 ## Product boundary
 
@@ -110,8 +110,8 @@ npm run check
 npm audit --audit-level=moderate
 npm audit --omit=dev
 npm pack --pack-destination /absolute/reviewed-artifact-directory
-node scripts/packed-npx-smoke.mjs /absolute/reviewed-artifact-directory/enterpret-google-drive-mcp-0.3.2.tgz
-npm publish /absolute/reviewed-artifact-directory/enterpret-google-drive-mcp-0.3.2.tgz --access public
+node scripts/packed-npx-smoke.mjs /absolute/reviewed-artifact-directory/enterpret-google-drive-mcp-0.3.3.tgz
+npm publish /absolute/reviewed-artifact-directory/enterpret-google-drive-mcp-0.3.3.tgz --access public
 ```
 
 After the bootstrap publication, verify the registry checksum and exact-version `npx` surface. Then create a protected GitHub environment named `npm` with required reviewers and configure npm Trusted Publishing with GitHub organization `aavaz-ai`, repository `google-drive-mcp`, workflow filename `publish.yml`, and environment `npm`. Subsequent GitHub releases must use a `v<package-version>` tag that exactly matches `package.json`; the workflow serializes releases and publishes the same tarball it smokes.
