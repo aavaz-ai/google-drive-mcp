@@ -38,7 +38,7 @@ describe('published package contract', () => {
     expect(packageJson.exports).toEqual({});
     expect(packageJson.scripts.auth).toBeUndefined();
     expect(packageJson.bin).toEqual({ 'google-drive-mcp': './dist/index.js' });
-    expect(packageJson.engines).toEqual({ node: '>=22' });
+    expect(packageJson.engines).toEqual({ node: '>=22.13.0' });
     expect(packageJson.publishConfig).toEqual({ access: 'public' });
     expect(packageJson.repository).toEqual({
       type: 'git',
@@ -66,6 +66,7 @@ describe('published package contract', () => {
   it('ships only managed runtime dependencies', () => {
     expect(Object.keys(packageJson.dependencies).sort()).toEqual([
       '@modelcontextprotocol/sdk',
+      'officeparser',
       'zod',
     ]);
     expect(packageJson.overrides).toMatchObject({

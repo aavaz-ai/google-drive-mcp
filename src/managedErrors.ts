@@ -4,6 +4,11 @@ export type GoogleDriveErrorCode =
   | "DRIVE_ITEM_NOT_AUTHORIZED"
   | "DRIVE_CAPABILITY_DENIED"
   | "DRIVE_ITEM_TYPE_UNSUPPORTED"
+  | "DOCUMENT_EXTRACTION_FAILED"
+  | "DOCUMENT_ENCRYPTED"
+  | "DOCUMENT_NO_EXTRACTABLE_TEXT"
+  | "DOCUMENT_LIMIT_EXCEEDED"
+  | "DOCUMENT_EXTRACTION_TIMEOUT"
   | "DRIVE_PARENT_NOT_AUTHORIZED"
   | "DRIVE_ITEM_NOT_FOUND"
   | "INVALID_INPUT"
@@ -38,6 +43,11 @@ const SAFE_MESSAGES: Record<GoogleDriveErrorCode, string> = {
   DRIVE_ITEM_NOT_AUTHORIZED: "The requested Google Drive item is not authorized for this connection.",
   DRIVE_CAPABILITY_DENIED: "Google Drive does not grant the capability required for this operation.",
   DRIVE_ITEM_TYPE_UNSUPPORTED: "This Google Drive item type is not supported for the requested operation.",
+  DOCUMENT_EXTRACTION_FAILED: "The document could not be read completely. It may be damaged or contain unsupported content.",
+  DOCUMENT_ENCRYPTED: "Password-protected documents are not supported. Select an unencrypted copy you are permitted to share.",
+  DOCUMENT_NO_EXTRACTABLE_TEXT: "The document has no extractable text. Scanned PDFs and images require OCR, which this connector does not provide.",
+  DOCUMENT_LIMIT_EXCEEDED: "The document exceeds the safe extraction limits (10 MiB download, 100,000 text characters, or document complexity). Use a smaller document.",
+  DOCUMENT_EXTRACTION_TIMEOUT: "Document extraction exceeded the time limit. Use a smaller or simpler document.",
   DRIVE_PARENT_NOT_AUTHORIZED: "The requested parent folder is not authorized for this connection.",
   DRIVE_ITEM_NOT_FOUND: "The authorized Google Drive item or subresource no longer exists.",
   INVALID_INPUT: "The request is invalid for this Google Drive tool.",

@@ -6,4 +6,6 @@ The upstream browser OAuth, credential storage, HTTP server, service-account and
 
 Runtime npm dependencies and their exact versions are declared in `package.json` and locked in `package-lock.json`. They are consumed as normal package dependencies rather than vendored source.
 
+Binary-document text extraction uses the MIT-licensed `officeparser` 8.2.0 package (https://github.com/harshankur/officeParser), including its PDF.js dependency for PDFs. Dependency license files remain in their npm distributions. OCR and remote-asset loading are disabled; no document content is sent to a conversion service.
+
 Before publication, release review must verify the pinned upstream provenance, retained MIT notice, final packed files, dependency licenses, exact OAuth scope, and absence of credentials. Publishing, tagging, or changing GitHub state requires explicit authorization.
