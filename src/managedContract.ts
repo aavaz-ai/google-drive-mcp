@@ -99,7 +99,7 @@ export const GOOGLE_DRIVE_TOOL_DESCRIPTIONS = {
   list_workspace_items: "List direct children of a managed workspace folder. This read never creates a missing workspace.",
   search_workspace_items: "Search app-authorized Drive items by name or full text, returning only descendants of the managed workspace. Raw Drive queries are unavailable.",
   get_item_metadata: "Return bounded metadata for one workspace or directly authorized item, including external folders.",
-  read_text_file: "Read a bounded page of an authorized UTF-8 text, Markdown, or CSV file when download is permitted.",
+  read_text_file: "Read text from an authorized TXT, Markdown, CSV, PDF, DOCX, XLSX, PPTX, ODT, ODS, ODP, or RTF file when download is permitted. Binary documents: at most 10 MiB and 100,000 extracted characters; use next_offset for pagination. Text extraction only, no OCR or image understanding; encrypted, damaged, oversized, or unsupported files fail explicitly. Use the native Google Docs, Sheets, or Slides reader for Google-native files.",
   read_google_doc: "Read a bounded plain-text page from an authorized Google Doc when download is permitted. Includes all tabs and nested tabs in document order, with tab labels for multi-tab Docs. Continue with next_offset to read further pages.",
   read_google_sheet: "Read an explicit bounded A1 cell or rectangular range from an authorized Google Sheet when download is permitted.",
   read_google_presentation: "Read bounded text content from an authorized Google Slides presentation when download is permitted.",

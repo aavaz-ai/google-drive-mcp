@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { GoogleDriveMcpError } from "./managedErrors.js";
+import { DOCUMENT_FORMATS, extractDocumentText as extractBinaryDocumentText, MAX_DOCUMENT_BYTES } from "./managedFileExtraction.js";
 import {
   MAX_READ_LENGTH,
   MAX_SLIDES,
@@ -279,16 +280,22 @@ function unknownWriteOutcome(error: unknown): GoogleDriveMcpError {
   });
 }
 
-async function readBoundedBody(response: Response, maximumBytes: number, operation: "read" | "write"): Promise<Uint8Array> {
+async function readBoundedBody(response: Response, maximumBytes: number, operation: "read" | "write", documentRead = false): Promise<Uint8Array> {
   const invalidResponse = (): GoogleDriveMcpError =>
     operation === "write"
       ? unknownWriteOutcome(new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE"))
       : new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
+  const oversizedResponse = (): GoogleDriveMcpError =>
+    documentRead ? new GoogleDriveMcpError("DOCUMENT_LIMIT_EXCEEDED") : invalidResponse();
   const declaredLength = response.headers.get("content-length");
   if (declaredLength !== null) {
     const parsedLength = Number(declaredLength);
-    if (!Number.isSafeInteger(parsedLength) || parsedLength < 0 || parsedLength > maximumBytes) {
+    if (!Number.isSafeInteger(parsedLength) || parsedLength < 0) {
       throw invalidResponse();
+    }
+    if (parsedLength > maximumBytes) {
+      await response.body?.cancel();
+      throw oversizedResponse();
     }
   }
   if (response.body === null) return new Uint8Array();
@@ -305,7 +312,7 @@ async function readBoundedBody(response: Response, maximumBytes: number, operati
       totalBytes += value.byteLength;
       if (totalBytes > maximumBytes) {
         await reader.cancel();
-        throw invalidResponse();
+        throw oversizedResponse();
       }
       chunks.push(value);
     }
@@ -528,12 +535,13 @@ export class GoogleDriveClient {
     url: string,
     init: RequestInit,
     maximumBytes: number,
+    documentRead = false,
   ): Promise<{ response: Response; body: Uint8Array }> {
     for (let attempt = 0; attempt < READ_RETRY_DELAYS_MS.length; attempt += 1) {
       if (attempt > 0) await this.sleep(READ_RETRY_DELAYS_MS[attempt] ?? 0);
       const response = await this.request(url, init, "read");
       try {
-        return { response, body: await readBoundedBody(response, maximumBytes, "read") };
+        return { response, body: await readBoundedBody(response, maximumBytes, "read", documentRead) };
       } catch (error) {
         const transientBodyFailure =
           error instanceof GoogleDriveMcpError && error.code === "PROVIDER_UNAVAILABLE";
@@ -1115,9 +1123,23 @@ export class GoogleDriveClient {
 
   async readTextFile(input: ReadTextFileInput): Promise<{ status: "ok"; item: ItemReference; text: string; next_offset: number | null }> {
     const { item } = await this.authorizeItem(input.item_id);
-    this.assertMime(item, TEXT_MIMES);
+    this.assertMime(item, new Set([...TEXT_MIMES, ...DOCUMENT_FORMATS.keys()]));
     this.requireCapability(item, "canDownload");
     const mediaQuery = new URLSearchParams({ alt: "media", supportsAllDrives: "true" });
+    if (DOCUMENT_FORMATS.has(item.mimeType)) {
+      const { response, body } = await this.readBytes(
+        `${DRIVE_API}/files/${encodePathPart(item.id)}?${mediaQuery}`,
+        { method: "GET", redirect: "error", signal: AbortSignal.timeout(30_000) },
+        MAX_DOCUMENT_BYTES,
+        true,
+      );
+      // Binary extraction needs the entire file; never parse a partial range as success.
+      if (response.status !== 200 || response.headers.has("content-range")) {
+        throw new GoogleDriveMcpError("PROVIDER_INVALID_RESPONSE");
+      }
+      const text = await extractBinaryDocumentText(body, item.mimeType);
+      return { status: "ok", item: itemReference(item), ...sliceText(text, input.offset, input.limit) };
+    }
     const { response, body } = await this.readBytes(
       `${DRIVE_API}/files/${encodePathPart(item.id)}?${mediaQuery}`,
       { method: "GET", headers: { Range: `bytes=0-${MAX_TEXT_RESPONSE_BYTES - 1}` } },

@@ -9,11 +9,14 @@ const isWatch = process.argv.includes('--watch');
 
 /** @type {import('esbuild').BuildOptions} */
 const buildOptions = {
-  entryPoints: [join(__dirname, '../src/managedIndex.ts')],
+  entryPoints: {
+    index: join(__dirname, '../src/managedIndex.ts'),
+    managedFileWorker: join(__dirname, '../src/managedFileWorker.ts'),
+  },
   bundle: true,
   platform: 'node',
   target: 'node22',
-  outfile: join(__dirname, '../dist/index.js'),
+  outdir: join(__dirname, '../dist'),
   format: 'esm',
   // Remove banner for ESM format - shebang will be added by npm/npx
   // banner: {
@@ -33,7 +36,7 @@ if (isWatch) {
   // Make the file executable on non-Windows platforms
   if (process.platform !== 'win32') {
     const { chmod } = await import('fs/promises');
-    await chmod(buildOptions.outfile, 0o755);
+    await chmod(join(buildOptions.outdir, 'index.js'), 0o755);
   }
   console.log('Build complete!');
 }

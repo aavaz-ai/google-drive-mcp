@@ -47,7 +47,7 @@
         "THIRD_PARTY_NOTICES.md"
     ],
     "engines": {
-        "node": ">=22"
+        "node": ">=22.13.0"
     },
     "publishConfig": {
         "access": "public"
@@ -73,6 +73,7 @@
     },
     "dependencies": {
         "@modelcontextprotocol/sdk": "1.32.1",
+        "officeparser": "8.2.0",
         "zod": "^3.25.76"
     },
     "overrides": {
