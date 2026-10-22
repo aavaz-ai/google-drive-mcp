@@ -114,7 +114,32 @@ node scripts/packed-npx-smoke.mjs /absolute/reviewed-artifact-directory/enterpre
 npm publish /absolute/reviewed-artifact-directory/enterpret-google-drive-mcp-0.3.3.tgz --access public
 ```
 
-After the bootstrap publication, verify the registry checksum and exact-version `npx` surface. Then create a protected GitHub environment named `npm` with required reviewers and configure npm Trusted Publishing with GitHub organization `aavaz-ai`, repository `google-drive-mcp`, workflow filename `publish.yml`, and environment `npm`. Subsequent GitHub releases must use a `v<package-version>` tag that exactly matches `package.json`; the workflow serializes releases and publishes the same tarball it smokes.
+After the bootstrap publication, verify the registry checksum and exact-version `npx` surface. Configure npm Trusted Publishing with GitHub organization `aavaz-ai`, repository `google-drive-mcp`, workflow filename `publish.yml`, and environment `npm`. Keep `environment: npm` in the publish job because it is part of the trusted-publisher identity. Subsequent GitHub releases must use a `v<package-version>` tag that exactly matches `package.json`; the workflow serializes releases and publishes the same tarball it smokes.
+
+### Reviewer-free npm environment
+
+The `npm` environment must have **no required reviewers and no wait timer**. Publication should not depend on approval from a named person. Keep its existing protected-branches deployment policy, release permissions, CI validation, dependency audit, tag/version check, exact-artifact smoke, OIDC authentication, and provenance. Removing this environment approval does not remove pull-request review requirements or authorize arbitrary releases.
+
+GitHub stores environment protection rules outside the repository. Merging this change alone does not remove an existing approval gate. A repository administrator must apply the checked-in [environment configuration](.github/npm-environment.json) once; repository push access is not sufficient. First inspect the current environment and confirm that its deployment branch policy matches the checked-in configuration. If it differs, reconcile that policy separately rather than replacing it blindly.
+
+From the repository root, using the administrator's own authorized GitHub account:
+
+```bash
+gh api repos/aavaz-ai/google-drive-mcp/environments/npm \
+  --jq '{name, protection_rules, deployment_branch_policy}'
+
+gh api --method PUT repos/aavaz-ai/google-drive-mcp/environments/npm \
+  --input .github/npm-environment.json
+
+gh api repos/aavaz-ai/google-drive-mcp/environments/npm \
+  --jq '{name, protection_rules, deployment_branch_policy}'
+```
+
+The final response must contain no `required_reviewers` or `wait_timer` protection rule, and must retain `protected_branches: true` and `custom_branch_policies: false`. The equivalent UI change is **Settings > Environments > npm**: clear **Required reviewers**, leave the wait timer disabled, and preserve the deployment branch policy. Do not delete the environment, remove it from the workflow, add a long-lived npm token, or grant an author extra permissions to bypass the approval.
+
+After the administrator applies the change, inspect any waiting publication run. If it remains waiting, retry the existing failed or cancelled run as appropriate; do not create a duplicate release or attempt to republish an existing version. Confirm publication in the npm registry before updating a host package pin. This configuration file is an administrator-applied API payload, not an automatically synchronized GitHub setting.
+
+References: [GitHub environment configuration API](https://docs.github.com/en/rest/deployments/environments#create-or-update-an-environment), [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
 
 Before any release, run the complete validation commands above, inspect the packed file list, confirm the target commit and tag, and verify that no credentials or local artifacts are present. Publish the package before enabling or deploying a Wisdom manifest that pins it.
 
