@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented here.
 
+## 0.3.2
+
+- Read all authorized Google Docs tabs and nested tabs with labeled, bounded pagination while retaining single-tab-only whole-document updates.
+- Upgrade vulnerable runtime and test dependencies, and replace the build-only shell helper with Node filesystem operations.
+
 ## 0.3.1
 
 - Preserve bounded sparse Google Sheets read responses without padding while keeping create and update values rectangular.
