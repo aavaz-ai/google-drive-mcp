@@ -100,7 +100,7 @@ export const GOOGLE_DRIVE_TOOL_DESCRIPTIONS = {
   search_workspace_items: "Search app-authorized Drive items by name or full text, returning only descendants of the managed workspace. Raw Drive queries are unavailable.",
   get_item_metadata: "Return bounded metadata for one workspace or directly authorized item, including external folders.",
   read_text_file: "Read a bounded page of an authorized UTF-8 text, Markdown, or CSV file when download is permitted.",
-  read_google_doc: "Read a bounded plain-text page from an authorized single-tab Google Doc when download is permitted. Multi-tab Docs are rejected.",
+  read_google_doc: "Read a bounded plain-text page from an authorized Google Doc when download is permitted. Includes all tabs and nested tabs in document order, with tab labels for multi-tab Docs. Continue with next_offset to read further pages.",
   read_google_sheet: "Read an explicit bounded A1 cell or rectangular range from an authorized Google Sheet when download is permitted.",
   read_google_presentation: "Read bounded text content from an authorized Google Slides presentation when download is permitted.",
   replace_text_file: "Replace all content of an authorized UTF-8 text, Markdown, or CSV file when editing is permitted.",
