@@ -1,7 +1,7 @@
 import JSZip from "jszip";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { DOCUMENT_FORMATS, extractDocumentText, MAX_DOCUMENT_BYTES } from "../../src/managedFileExtraction.js";
 import { toToolError } from "../../src/managedErrors.js";
@@ -28,6 +28,22 @@ function fixtureClient(mime: string, bytes: Uint8Array) {
 }
 
 describe("bounded binary document reads", () => {
+  it("returns DOCUMENT_EXTRACTION_TIMEOUT and aborts a stalled download before the 30 s host budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const { client, state, calls } = fixtureClient("application/pdf", new Uint8Array());
+      state.media = () => new Promise<Response>(() => {}) as unknown as Response;
+      const read = client.readTextFile({ item_id: "approved_file", offset: 0, limit: 100 });
+      const assertion = expect(read).rejects.toMatchObject({ code: "DOCUMENT_EXTRACTION_TIMEOUT" });
+      await vi.advanceTimersByTimeAsync(20_000);
+      await assertion;
+      const media = calls.find((call) => call.url.searchParams.get("alt") === "media")!;
+      expect(media.init?.signal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each([...DOCUMENT_FORMATS])("reads real content for %s", async (mime, format) => {
     const bytes = format === "pdf" ? await pdfFixture() : await officeFixture(format);
     const { client, calls } = fixtureClient(mime, bytes);

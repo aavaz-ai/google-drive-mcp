@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented here.
 
+## 0.3.4
+
+- Return `read_google_doc` and `read_text_file` results, or `DOCUMENT_EXTRACTION_TIMEOUT`, within 20 seconds so the call finishes inside the host's 30-second subprocess budget; the deadline aborts in-flight Google requests.
+- Request only tab titles and text runs from the Docs API for `read_google_doc`, instead of the full styled document JSON, so large multi-tab Docs read faster.
+
 ## 0.3.3
 
 - Extract bounded text from authorized PDF, DOCX, XLSX, PPTX, ODT, ODS, ODP, and RTF files through the existing `read_text_file` action.
