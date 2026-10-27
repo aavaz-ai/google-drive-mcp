@@ -72,6 +72,18 @@ const MAX_JSON_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_TEXT_RESPONSE_BYTES = MAX_TEXT_LENGTH * 4;
 const MAX_INTERNAL_PAGES = 10;
 const MAX_PAGE_TOKEN_LENGTH = 2_048;
+// The host kills the subprocess 30 s after spawn; leave room for startup and the MCP handshake.
+const DOC_READ_DEADLINE_MS = 20_000;
+// Only the tab titles and text runs readDocumentText uses; the full tab JSON also
+// carries every style and is many times larger on big multi-tab Docs.
+// The deepest childTabs level stays unmasked so tabs nested past it are never dropped.
+// Nested tables stay unmasked so their text is never dropped.
+const DOC_PARAGRAPH_TEXT_FIELDS = "paragraph/elements/textRun/content";
+const DOC_TAB_TEXT_FIELDS =
+  `tabProperties/title,documentTab/body/content(${DOC_PARAGRAPH_TEXT_FIELDS},` +
+  `table/tableRows/tableCells/content(${DOC_PARAGRAPH_TEXT_FIELDS},table),tableOfContents/content(${DOC_PARAGRAPH_TEXT_FIELDS}))`;
+const DOC_TEXT_FIELDS =
+  `tabs(${DOC_TAB_TEXT_FIELDS},childTabs(${DOC_TAB_TEXT_FIELDS},childTabs(${DOC_TAB_TEXT_FIELDS},childTabs)))`;
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 export type Sleep = (milliseconds: number) => Promise<void>;
@@ -471,6 +483,23 @@ function extractSlideTexts(slide: unknown): string[] {
     .filter((part) => part.length > 0);
 }
 
+// Abandoning a read is safe; the caller gets a clear error instead of the host killing the subprocess.
+async function withDocumentReadDeadline<T>(read: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new GoogleDriveMcpError("DOCUMENT_EXTRACTION_TIMEOUT"));
+    }, DOC_READ_DEADLINE_MS);
+  });
+  try {
+    return await Promise.race([read(controller.signal), timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class GoogleDriveClient {
   private readonly bearer: string;
   private readonly fetch: FetchLike;
@@ -521,8 +550,8 @@ export class GoogleDriveClient {
     throw new GoogleDriveMcpError("PROVIDER_UNAVAILABLE");
   }
 
-  private async readJson(url: string): Promise<unknown> {
-    const { body } = await this.readBytes(url, { method: "GET" }, MAX_JSON_RESPONSE_BYTES);
+  private async readJson(url: string, signal?: AbortSignal): Promise<unknown> {
+    const { body } = await this.readBytes(url, { method: "GET", signal }, MAX_JSON_RESPONSE_BYTES);
     try {
       return JSON.parse(decodeUtf8(body, "read")) as unknown;
     } catch (error) {
@@ -1122,6 +1151,13 @@ export class GoogleDriveClient {
   }
 
   async readTextFile(input: ReadTextFileInput): Promise<{ status: "ok"; item: ItemReference; text: string; next_offset: number | null }> {
+    return withDocumentReadDeadline((signal) => this.readTextFileContent(input, signal));
+  }
+
+  private async readTextFileContent(
+    input: ReadTextFileInput,
+    signal: AbortSignal,
+  ): Promise<{ status: "ok"; item: ItemReference; text: string; next_offset: number | null }> {
     const { item } = await this.authorizeItem(input.item_id);
     this.assertMime(item, new Set([...TEXT_MIMES, ...DOCUMENT_FORMATS.keys()]));
     this.requireCapability(item, "canDownload");
@@ -1129,7 +1165,7 @@ export class GoogleDriveClient {
     if (DOCUMENT_FORMATS.has(item.mimeType)) {
       const { response, body } = await this.readBytes(
         `${DRIVE_API}/files/${encodePathPart(item.id)}?${mediaQuery}`,
-        { method: "GET", redirect: "error", signal: AbortSignal.timeout(30_000) },
+        { method: "GET", redirect: "error", signal },
         MAX_DOCUMENT_BYTES,
         true,
       );
@@ -1142,7 +1178,7 @@ export class GoogleDriveClient {
     }
     const { response, body } = await this.readBytes(
       `${DRIVE_API}/files/${encodePathPart(item.id)}?${mediaQuery}`,
-      { method: "GET", headers: { Range: `bytes=0-${MAX_TEXT_RESPONSE_BYTES - 1}` } },
+      { method: "GET", headers: { Range: `bytes=0-${MAX_TEXT_RESPONSE_BYTES - 1}` }, signal },
       MAX_TEXT_RESPONSE_BYTES,
     );
     const contentRange = response.headers.get("content-range");
@@ -1161,10 +1197,19 @@ export class GoogleDriveClient {
   }
 
   async readGoogleDoc(input: ReadGoogleDocInput): Promise<{ status: "ok"; item: ItemReference; text: string; next_offset: number | null }> {
+    return withDocumentReadDeadline((signal) => this.readGoogleDocText(input, signal));
+  }
+
+  private async readGoogleDocText(
+    input: ReadGoogleDocInput,
+    signal: AbortSignal,
+  ): Promise<{ status: "ok"; item: ItemReference; text: string; next_offset: number | null }> {
     const { item } = await this.authorizeItem(input.document_id);
     this.assertMime(item, DOC_MIME);
     this.requireCapability(item, "canDownload");
-    const text = readDocumentText(await this.document(item.id));
+    const query = new URLSearchParams({ includeTabsContent: "true", fields: DOC_TEXT_FIELDS });
+    const document = asRecord(await this.readJson(`${DOCS_API}/${encodePathPart(item.id)}?${query}`, signal));
+    const text = readDocumentText(document);
     return {
       status: "ok",
       item: itemReference(item),

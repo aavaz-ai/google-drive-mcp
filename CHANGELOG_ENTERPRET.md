@@ -2,6 +2,12 @@
 
 All notable changes to this package will be documented here.
 
+## 0.3.4
+
+- Return `read_google_doc` and `read_text_file` results, or `DOCUMENT_EXTRACTION_TIMEOUT`, within 20 seconds so the call finishes inside the host's 30-second subprocess budget; the deadline aborts in-flight Google requests.
+- Request only tab titles and text runs from the Docs API for `read_google_doc`, instead of the full styled document JSON. On an 8-tab, 71,695-character Doc the response drops from 3.4 MB to 0.43 MB with identical text.
+- Upgrade `zod` to 4.6.7 (GHSA-mrhx-c7xc-m3w5) and the `body-parser` override to 2.4.0 (GHSA-27r3-jxmh-p828). Managed tools already used the `zod/v4` API; the unreachable upstream tools import `zod/v3`.
+
 ## 0.3.3
 
 - Extract bounded text from authorized PDF, DOCX, XLSX, PPTX, ODT, ODS, ODP, and RTF files through the existing `read_text_file` action.

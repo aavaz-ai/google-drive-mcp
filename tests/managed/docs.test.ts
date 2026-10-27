@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MAX_TEXT_LENGTH } from "../../src/tools/managedSchemas.js";
 import { GoogleDriveClient } from "../../src/managedWorkspace.js";
@@ -11,7 +11,7 @@ function tab(title: string, text: string) {
   return { tabProperties: { title }, documentTab: { body: body(text) } };
 }
 
-function fixture(document: unknown, options: { authorized?: boolean; canDownload?: boolean } = {}) {
+function fixture(document: unknown, options: { authorized?: boolean; canDownload?: boolean; hang?: boolean } = {}) {
   const calls: string[] = [];
   const client = new GoogleDriveClient("test_bearer", {
     fetch: async (input, init) => {
@@ -28,6 +28,12 @@ function fixture(document: unknown, options: { authorized?: boolean; canDownload
       }
       expect(url.hostname).toBe("docs.googleapis.com");
       expect(url.searchParams.get("includeTabsContent")).toBe("true");
+      expect(url.searchParams.get("fields")).toMatch(/^tabs\(tabProperties\/title,documentTab\/body\/content\(.*,childTabs\)\)\)$/u);
+      if (options.hang) {
+        return new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        });
+      }
       return Response.json(document);
     },
   });
@@ -35,6 +41,22 @@ function fixture(document: unknown, options: { authorized?: boolean; canDownload
 }
 
 describe("authorized Google Docs content reads", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("returns DOCUMENT_EXTRACTION_TIMEOUT and aborts the fetch before the 30 s host budget", async () => {
+    vi.useFakeTimers();
+    const { client } = fixture({ tabs: [tab("Notes", "late")] }, { hang: true });
+    let settled = false;
+    const read = client.readGoogleDoc({ document_id: "picked_doc", offset: 0, limit: 100 }).finally(() => { settled = true; });
+    const assertion = expect(read).rejects.toMatchObject({ code: "DOCUMENT_EXTRACTION_TIMEOUT" });
+    await vi.advanceTimersByTimeAsync(19_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await assertion;
+  });
+
   it("reads Notes, nested tabs, and Transcript in document order across page boundaries", async () => {
     const { client } = fixture({ tabs: [
       { ...tab("Notes", "Decisions\n"), childTabs: [tab("Actions", "Follow up\n")] },

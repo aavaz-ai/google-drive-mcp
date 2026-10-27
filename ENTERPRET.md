@@ -2,7 +2,7 @@
 
 Enterpret's small, self-hosted Google Drive MCP for creating and managing app-authorized content inside one marked `Enterpret` folder and content directly authorized through the host's Picker flow. It is stdio-only, accepts a host-supplied bearer, and uses only `https://www.googleapis.com/auth/drive.file`.
 
-This fork publishes `@enterpret/google-drive-mcp`; the current source version is `0.3.3`. The package builds one small `src/managedIndex.ts` sibling entrypoint over the focused managed-workspace modules. The original upstream entrypoint, authentication, tools, and tests remain intact in their original paths for future merges and regression coverage, but they are not reachable through the Enterpret package executable.
+This fork publishes `@enterpret/google-drive-mcp`; the current source version is `0.3.4`. The package builds one small `src/managedIndex.ts` sibling entrypoint over the focused managed-workspace modules. The original upstream entrypoint, authentication, tools, and tests remain intact in their original paths for future merges and regression coverage, but they are not reachable through the Enterpret package executable.
 
 ## Product boundary
 
@@ -57,7 +57,7 @@ Google classifies `drive.file` as non-sensitive. Normal OAuth app configuration 
 
 `read_text_file` additionally accepts `application/pdf`, the standard OOXML MIME types for DOCX/XLSX/PPTX, the OpenDocument MIME types for ODT/ODS/ODP, and `application/rtf` or `text/rtf`. This is a read-only extension; `create_text_file` and `replace_text_file` still accept only plain text, Markdown, and CSV. The 27-tool list and `drive.file` scope do not change. Native Google documents still use their dedicated readers.
 
-After fresh `files.get` authorization and `canDownload` checks, the client downloads at most 10 MiB from Google's fixed media endpoint with redirects disabled and a 30-second download timeout. Partial HTTP responses are rejected. OfficeParser runs on the bytes in a disposable worker with an empty environment (no OAuth bearer), no inherited Node flags, a 256 MiB old-generation heap limit, and a 30-second extraction deadline. At most two workers run per MCP process. Worker stdout/stderr are drained without forwarding. This is resource containment, not an OS security sandbox.
+After fresh `files.get` authorization and `canDownload` checks, the client downloads at most 10 MiB from Google's fixed media endpoint with redirects disabled and a 20-second deadline for the whole call. Partial HTTP responses are rejected. OfficeParser runs on the bytes in a disposable worker with an empty environment (no OAuth bearer), no inherited Node flags, a 256 MiB old-generation heap limit, and a 30-second worker deadline; the 20-second call deadline returns `DOCUMENT_EXTRACTION_TIMEOUT` first so the call ends inside the host's 30-second subprocess budget. At most two workers run per MCP process. Worker stdout/stderr are drained without forwarding. This is resource containment, not an OS security sandbox.
 
 Remote parser assets, OCR, attachment extraction, and raw XML output are disabled. ZIP expansion is capped at 32 MiB and 2,048 entries; XML complexity, table-cell expansion, and repeated content are bounded too. The worker returns only extracted text, capped at 100,000 characters, or a sanitized error category. Parser warnings about omitted content or breached limits fail the read; benign PDF reading-order/outline warnings do not. Pagination is over extracted text with fresh authorization and extraction on each call, never a persistent content cache.
 
@@ -110,8 +110,8 @@ npm run check
 npm audit --audit-level=moderate
 npm audit --omit=dev
 npm pack --pack-destination /absolute/reviewed-artifact-directory
-node scripts/packed-npx-smoke.mjs /absolute/reviewed-artifact-directory/enterpret-google-drive-mcp-0.3.3.tgz
-npm publish /absolute/reviewed-artifact-directory/enterpret-google-drive-mcp-0.3.3.tgz --access public
+node scripts/packed-npx-smoke.mjs /absolute/reviewed-artifact-directory/enterpret-google-drive-mcp-0.3.4.tgz
+npm publish /absolute/reviewed-artifact-directory/enterpret-google-drive-mcp-0.3.4.tgz --access public
 ```
 
 After the bootstrap publication, verify the registry checksum and exact-version `npx` surface. Configure npm Trusted Publishing with GitHub organization `aavaz-ai`, repository `google-drive-mcp`, workflow filename `publish.yml`, and environment `npm`. Keep `environment: npm` in the publish job because it is part of the trusted-publisher identity. Subsequent GitHub releases must use a `v<package-version>` tag that exactly matches `package.json`; the workflow serializes releases and publishes the same tarball it smokes.

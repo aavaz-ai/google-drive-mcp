@@ -1,5 +1,5 @@
 import { Readable } from 'stream';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import JSZip from 'jszip';
 import type { ToolDefinition, ToolContext, ToolResult } from '../types.js';
 import { errorResponse } from '../types.js';
