@@ -71,7 +71,7 @@ describe('published package contract', () => {
     ]);
     expect(packageJson.overrides).toMatchObject({
       '@hono/node-server': '^2.0.5',
-      'body-parser': '^2.3.0',
+      'body-parser': '^2.4.0',
       uuid: '^11.1.1',
     });
   });

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { v4 as uuidv4 } from 'uuid';
 import type { slides_v1 } from 'googleapis';
 import type { ToolDefinition, ToolResult, ToolContext } from '../types.js';

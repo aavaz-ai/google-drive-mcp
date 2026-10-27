@@ -77,8 +77,11 @@ const DOC_READ_DEADLINE_MS = 20_000;
 // Only the tab titles and text runs readDocumentText uses; the full tab JSON also
 // carries every style and is many times larger on big multi-tab Docs.
 // The deepest childTabs level stays unmasked so tabs nested past it are never dropped.
+// Nested tables stay unmasked so their text is never dropped.
+const DOC_PARAGRAPH_TEXT_FIELDS = "paragraph/elements/textRun/content";
 const DOC_TAB_TEXT_FIELDS =
-  "tabProperties/title,documentTab/body/content(paragraph/elements/textRun/content,table/tableRows/tableCells/content,tableOfContents/content)";
+  `tabProperties/title,documentTab/body/content(${DOC_PARAGRAPH_TEXT_FIELDS},` +
+  `table/tableRows/tableCells/content(${DOC_PARAGRAPH_TEXT_FIELDS},table),tableOfContents/content(${DOC_PARAGRAPH_TEXT_FIELDS}))`;
 const DOC_TEXT_FIELDS =
   `tabs(${DOC_TAB_TEXT_FIELDS},childTabs(${DOC_TAB_TEXT_FIELDS},childTabs(${DOC_TAB_TEXT_FIELDS},childTabs)))`;
 
